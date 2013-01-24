@@ -13,6 +13,9 @@
 // @exclude        https://www.facebook.com/events/*
 // ==/UserScript==
 
+//This comment was added by Arun Debray at 5:07 pm PST on Wednesday, .... hmph.
+// Used to test if we understand GitHub.
+
 /*
   Step 1: change @namespace, @name, and @description above.
   Step 2: Change the filename to the format "CS255-Lastname1-Lastname2.user.js"

@@ -102,21 +102,50 @@ function LoadKeys() {
 }
 
 // ask user for password to access key database 
-// !!!DOES NOT WORK YET!!!
+// TODO: make the password prompt hide the password
+// TODO: store password
+// TODO: make it pretty >:(
 function SetupDatabase() {
-    var found = localStorage.getItem('facebook-keys-' + my_username);
-    var password = "password"; // just using this for debugging purposes
+    // return if user has already logged on to the session OR
+    // if user is not logged on to facebook.
+    if (sessionStorage.getItem("facebook-session-" + my_username)
+       || !my_username) return;
+
+    // salt should be here if user has entered password before.
+    var found = localStorage.getItem('facebook-salt-' + my_username);
+    console.log("FOUND: " + found);
+    console.log("USER: " + my_username);
+    var password; // just using this for debugging purposes
+
+
+    // TODO: should probably decompose this
     if (found) {
 	console.log("Prompt user for his password.");
+	password = prompt("Enter Password: ");
+	var salt = localStorage.getItem("facebook-salt-" + my_username);
+	console.log("Full password: " + password + salt);
+
     } else {
 	console.log("Promt user to create a new password.");
-
-	// Generate a sufficiently strong salt (128 bits).
+	password = prompt("Welcome to the facebook encryption!" +
+			  "\nEnter a new password: ");
+	
+	// Generate a sufficiently strong salt (128 bits). -- taken off of Piazza
 	var salt = GetRandomValues(4);
-	// Create a 128-bit key from a password using the salt, with the default number of iterations.
+
+	// Create a 128-bit key from a password using the salt, with the default
+	// number of iterations. -- taken off of Piazza
 	sjcl.misc.pbkdf2(password, salt, null, 128);
+
+	// I need to put the salt somewhere... easy solution
+	localStorage.setItem("facebook-salt-" + my_username, salt);
+	var test = localStorage.getItem('facebook-salt-' + my_username);
+	console.log("test vs salt: " + test + " :: " + salt);
+	console.log("Full entered password: " + password + salt);
     }
 
+    // need to start a session with the user
+    sessionStorage.setItem("facebook-session-" + my_username, true);
 }
 
 /////////////////////////////////////////////////////////
@@ -1547,7 +1576,7 @@ sjcl.codec.utf8String.toBits(data);
 
 // This is the initialization
 SetupUsernames();
-// SetupDatabase(); // new function when user enters a session. NOT QUITE WORKING YET
+SetupDatabase(); // new function when user enters a session. NOT QUITE WORKING YET
 LoadKeys();
 AddElements();
 UpdateKeysTable();

@@ -1,4 +1,4 @@
-// ==UserScript==
+// ==UserScript== (TODO)
 // @namespace      CS255-Lastname1-Lastname2
 // @name           CS255-Lastname1-Lastname2
 // @description    CS255-Lastname1-Lastname2 - CS255 Assignment 1
@@ -14,9 +14,11 @@
 // ==/UserScript==
 
 /*
-  Step 1: change @namespace, @name, and @description above.
+  Step 1: Change @namespace, @name, and @description above.
   Step 2: Change the filename to the format "CS255-Lastname1-Lastname2.user.js"
   Step 3: Fill in the functions below.
+  Step 4: ???
+  Step 5: Profit!
 */
 
 // Strict mode makes it easier to catch errors.
@@ -180,7 +182,7 @@ function SetupDatabase() {
 
   A silly example of this in action:
 
-    var key1 = new Array(8);
+    var key1 = new Array(8); -- maybe we want GetRandomValues(8) here?
     var cipher = new sjcl.cipher.aes(key1);
     var dumbtext = new Array(4);
     dumbtext[0] = 1; dumbtext[1] = 2; dumbtext[2] = 3; dumbtext[3] = 4;

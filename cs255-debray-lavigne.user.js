@@ -101,54 +101,6 @@ function LoadKeys() {
   }
 }
 
-// Need to do things....
-function SetupDatabase() {
-    // return if user has already logged on to the session OR
-    // if user is not logged on to facebook
-    if (!my_username || sessionStorage.getItem('facebook-salt-' + my_username)) {
-	return;
-    }
-
-    // salt should be here if user has entered a password before
-    var found = cs255.localStorage.getItem('facebook-salt-' + my_username);
-    console.log("Found: " + found);
-    console.log("User: " + my_username);
-    var password;
-
-    // TODO: decompose?
-    if (found) {
-	console.log("Prompting user for pw.");
-	password = prompt("Welcome back to facebook encryption!" +
-			  "\nEnter a  password: ");
-	
-	// Generate a sufficiently strong salt (128 bits). -- taken off of Piazza
-	var salt = cs255.localStorage.getItem("facebook-salt-" + my_username);
-
-	// Create a 128-bit key from a password using the salt, with the default
-	// number of iterations. -- taken off of Piazza
-	sjcl.misc.pbkdf2(password, salt, null, 128);
-	console.log("Full entered password: " + password + salt);
-    }else{
-	console.log("Prompting user to create pw.");
-	password = prompt("Welcome to facebook encryption!" +
-			  "\nEnger a password: ");
-	var salt = GetRandomValues(4);
-		// Create a 128-bit key from a password using the salt, with the default
-	// number of iterations. -- taken off of Piazza
-	sjcl.misc.pbkdf2(password, salt, null, 128);
-
-	// I need to put the salt somewhere... easy solution
-	cs255.localStorage.setItem("facebook-salt-" + my_username, salt);
-	var test = cs255.localStorage.getItem('facebook-salt-' + my_username);
-	console.log("test vs salt: " + test + " :: " + salt);
-	console.log("Full entered password: " + password + salt);
-    }
-
-    // need to start a session with the user
-    sessionStorage.setItem("facebook-session-" + my_username, true);
-}
-
-
 /////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////
 //
@@ -1612,7 +1564,6 @@ LoadKeys();
 AddElements();
 UpdateKeysTable();
 RegisterChangeEvents();
-SetupDatabase();
 
 console.log("CS255 script finished loading.");
 

@@ -2,7 +2,7 @@
 // @namespace      CS255-Lastname1-Lastname2
 // @name           CS255-Lastname1-Lastname2
 // @description    CS255-Lastname1-Lastname2 - CS255 Assignment 1
-// @version        1.4
+// @version        1.5
 //
 // 
 // @include        http://www.facebook.com/*
@@ -16,7 +16,8 @@
 /*
   Step 1: change @namespace, @name, and @description above.
   Step 2: Change the filename to the format "CS255-Lastname1-Lastname2.user.js"
-  Step 3: Fill in the functions below.
+  Step 3: Install this file as an (unpacked) Chrome extension using manifest.json.
+  Step 4: Fill in the functions below.
 */
 
 // Strict mode makes it easier to catch errors.
@@ -87,59 +88,58 @@ function SaveKeys() {
   // CS255-todo: plaintext keys going to disk?
   var key_str = JSON.stringify(keys);
 
-  localStorage.setItem('facebook-keys-' + my_username, encodeURIComponent(key_str));
+  cs255.localStorage.setItem('facebook-keys-' + my_username, key_str);
 }
 
 // Load the group keys from disk.
 function LoadKeys() {
   keys = {}; // Reset the keys.
-  var saved = localStorage.getItem('facebook-keys-' + my_username);
+  var saved = cs255.localStorage.getItem('facebook-keys-' + my_username);
   if (saved) {
-    var key_str = decodeURIComponent(saved);
     // CS255-todo: plaintext keys were on disk?
-    keys = JSON.parse(key_str);
+    keys = JSON.parse(saved);
   }
 }
 
-// ask user for password to access key database 
-// TODO: make the password prompt hide the password
-// TODO: store password
-// TODO: make it pretty >:(
+// Need to do things....
 function SetupDatabase() {
     // return if user has already logged on to the session OR
-    // if user is not logged on to facebook.
-    if (sessionStorage.getItem("facebook-session-" + my_username)
-       || !my_username) return;
+    // if user is not logged on to facebook
+    if (!my_username || sessionStorage.getItem('facebook-salt-' + my_username)) {
+	return;
+    }
 
-    // salt should be here if user has entered password before.
-    var found = localStorage.getItem('facebook-salt-' + my_username);
-    console.log("FOUND: " + found);
-    console.log("USER: " + my_username);
-    var password; // just using this for debugging purposes
+    // salt should be here if user has entered a password before
+    var found = cs255.localStorage.getItem('facebook-salt-' + my_username);
+    console.log("Found: " + found);
+    console.log("User: " + my_username);
+    var password;
 
-
-    // TODO: should probably decompose this
+    // TODO: decompose?
     if (found) {
-	console.log("Prompt user for his password.");
-	password = prompt("Enter Password: ");
-	var salt = localStorage.getItem("facebook-salt-" + my_username);
-	console.log("Full password: " + password + salt);
-
-    } else {
-	console.log("Promt user to create a new password.");
-	password = prompt("Welcome to the facebook encryption!" +
-			  "\nEnter a new password: ");
+	console.log("Prompting user for pw.");
+	password = prompt("Welcome back to facebook encryption!" +
+			  "\nEnter a  password: ");
 	
 	// Generate a sufficiently strong salt (128 bits). -- taken off of Piazza
-	var salt = GetRandomValues(4);
+	var salt = cs255.localStorage.getItem("facebook-salt-" + my_username);
 
 	// Create a 128-bit key from a password using the salt, with the default
 	// number of iterations. -- taken off of Piazza
 	sjcl.misc.pbkdf2(password, salt, null, 128);
+	console.log("Full entered password: " + password + salt);
+    }else{
+	console.log("Prompting user to create pw.");
+	password = prompt("Welcome to facebook encryption!" +
+			  "\nEnger a password: ");
+	var salt = GetRandomValues(4);
+		// Create a 128-bit key from a password using the salt, with the default
+	// number of iterations. -- taken off of Piazza
+	sjcl.misc.pbkdf2(password, salt, null, 128);
 
 	// I need to put the salt somewhere... easy solution
-	localStorage.setItem("facebook-salt-" + my_username, salt);
-	var test = localStorage.getItem('facebook-salt-' + my_username);
+	cs255.localStorage.setItem("facebook-salt-" + my_username, salt);
+	var test = cs255.localStorage.getItem('facebook-salt-' + my_username);
 	console.log("test vs salt: " + test + " :: " + salt);
 	console.log("Full entered password: " + password + salt);
     }
@@ -147,6 +147,7 @@ function SetupDatabase() {
     // need to start a session with the user
     sessionStorage.setItem("facebook-session-" + my_username, true);
 }
+
 
 /////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////
@@ -200,6 +201,36 @@ function SetupDatabase() {
 /////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////
 
+var cs255 = {
+  localStorage: {
+    setItem: function(key, value) {
+      localStorage.setItem(key, value);
+      var newEntries = {};
+      newEntries[key] = value;
+      chrome.storage.local.set(newEntries);
+    },
+    getItem: function(key) {
+      return localStorage.getItem(key);
+    },
+    clear: function() {
+      chrome.storage.local.clear();
+    }
+  }
+}
+
+if (typeof chrome.storage === "undefined") {
+  var id = function() {};
+  chrome.storage = {local: {get: id, set: id}};
+}
+else {
+  // See if there are any values stored with the extension.
+  chrome.storage.local.get(null, function(onDisk) {
+    for (key in onDisk) {
+      localStorage.setItem(key, onDisk[key]);
+    }
+  });
+}
+
 // Get n 32-bit-integers entropy as an array. Defaults to 1 word
 function GetRandomValues(n) {
 
@@ -245,13 +276,15 @@ function rot13(text) {
 function SetupUsernames() {
   // get who you are logged in as
   var meta = document.getElementsByClassName('navItem tinyman')[0];
-  if (typeof meta !== "undefined") {
-    var usernameMatched = /www.facebook.com\/(.*?)ref=tn_tnmn/i.exec(meta.innerHTML);
-    usernameMatched = usernameMatched[1].replace(/&amp;/, '');
-    usernameMatched = usernameMatched.replace(/\?/, '');
-    usernameMatched = usernameMatched.replace(/profile\.phpid=/, '');
-    my_username = usernameMatched; // Update global.
-  }
+
+  // If we can't get a username, halt execution.
+  assert (typeof meta !== "undefined", "CS255 script failed. No username detected. (This is usually harmless.)");
+  
+  var usernameMatched = /www.facebook.com\/(.*?)ref=tn_tnmn/i.exec(meta.innerHTML);
+  usernameMatched = usernameMatched[1].replace(/&amp;/, '');
+  usernameMatched = usernameMatched.replace(/\?/, '');
+  usernameMatched = usernameMatched.replace(/profile\.phpid=/, '');
+  my_username = usernameMatched; // Update global.
 }
 
 function getClassName(obj) {
@@ -1423,8 +1456,7 @@ sjcl.hash.sha256.prototype = {
    */
   update: function (data) {
     if (typeof data === "string") {
-      data = 
-sjcl.codec.utf8String.toBits(data);
+      data = sjcl.codec.utf8String.toBits(data);
     }
     var i, b = this._buffer = sjcl.bitArray.concat(this._buffer, data),
         ol = this._length,
@@ -1576,11 +1608,11 @@ sjcl.codec.utf8String.toBits(data);
 
 // This is the initialization
 SetupUsernames();
-SetupDatabase(); // new function when user enters a session. NOT QUITE WORKING YET
 LoadKeys();
 AddElements();
 UpdateKeysTable();
 RegisterChangeEvents();
+SetupDatabase();
 
 console.log("CS255 script finished loading.");
 

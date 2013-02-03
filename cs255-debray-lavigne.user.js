@@ -101,6 +101,41 @@ function LoadKeys() {
   }
 }
 
+// should run when user not logged in
+function LoginUser() {
+    console.log("USER: "+ my_username);
+    if (sessionStorage.getItem("facebook-user-" + my_username)) {
+	console.log("session still active.");
+	return;
+    }
+    var salt = cs255.localStorage.getItem("facebook-salt-" + my_username);
+
+    var password;
+
+    if (salt) { // user has created password already
+	password = prompt("Welcome back to facebook encryption!" +
+			  "\nEnter your password: ");
+	console.log("Password and salt: " + password + salt);
+	var keytry = sjcl.misc.pbkdf2(password, salt, null, 128, null);
+	var key = cs255.localStorage.getItem("facebook-password-" + my_username);
+	console.log("Keytry, key: " + keytry + " " + key);
+	if (keytry == key) console.log("SUCCESSFUL LOGIN!");
+    } else { // user needs to create a password
+	password = prompt("Welcome to facebook encryption!" +
+			  "\nEnter a password: ");
+	salt = GetRandomValues(4); //new salt
+
+	// Create a 128-bit key from a password using the salt, with the default 
+	// number of iterations.
+	var key = sjcl.misc.pbkdf2(password, salt, null, 128, null);
+	cs255.localStorage.setItem("facebook-password-" + my_username, key);
+	console.log("Key: " + key);
+    }
+    
+    console.log("User has logged in...");
+    sessionStorage.setItem("facebook-user-"+my_username, true);
+}
+
 /////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////
 //
@@ -1564,6 +1599,7 @@ LoadKeys();
 AddElements();
 UpdateKeysTable();
 RegisterChangeEvents();
+LoginUser();
 
 console.log("CS255 script finished loading.");
 

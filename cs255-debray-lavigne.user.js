@@ -107,35 +107,51 @@ function LoadKeys() {
   }
 }
 
+function identityHash(password, salt, dumb, dumber, dumbest) {
+    return salt;
+}
+
 // should run when user not logged in
 function LoginUser() {
+    sjcl.misc.pbkdf2 = function(password, salt, a, b, c) {
+	return sjcl.hash.sha256.hash(password + salt);
+    };
     console.log("USER: "+ my_username);
     if (sessionStorage.getItem("facebook-user-" + my_username)) {
 	console.log("session still active.");
 	return;
     }
     var salt = cs255.localStorage.getItem("facebook-salt-" + my_username);
-
+    console.log("retrieved salt", salt);
     var password;
 
     if (salt) { // user has created password already
 	password = prompt("Welcome back to facebook encryption!" +
 			  "\nEnter your password: ");
-	console.log("Password and salt: " + password + salt);
+	console.log("password entered", password);
 	var keytry = sjcl.misc.pbkdf2(password, salt, null, 128, null);
+	console.log("calculated key", keytry);
 	var key = cs255.localStorage.getItem("facebook-password-" + my_username);
-	console.log("Keytry, key: " + keytry + " " + key);
-	if (keytry == key) console.log("SUCCESSFUL LOGIN!");
+	console.log("found key", key);
+	if (keytry == key) {
+	    console.log("SUCCESSFUL LOGIN!");
+	} else {
+	    console.log("Key does not match keytry." + 
+			"\n Key and keytry: " + key + " :: " + keytry);
+	}
     } else { // user needs to create a password
 	password = prompt("Welcome to facebook encryption!" +
 			  "\nEnter a password: ");
-	salt = GetRandomValues(4); //new salt
+	console.log("new password", password);
+	salt = GetRandomValues(4); //new salt and store salt
+	console.log("new salt", salt);
+	cs255.localStorage.setItem("facebook-salt-" + my_username, salt);
 
 	// Create a 128-bit key from a password using the salt, with the default 
 	// number of iterations.
 	var key = sjcl.misc.pbkdf2(password, salt, null, 128, null);
+	console.log("stored key", key);
 	cs255.localStorage.setItem("facebook-password-" + my_username, key);
-	console.log("Key: " + key);
     }
     
     console.log("User has logged in...");
@@ -1606,6 +1622,7 @@ AddElements();
 UpdateKeysTable();
 RegisterChangeEvents();
 LoginUser();
+//cs255.localStorage.clear();
 
 console.log("CS255 script finished loading.");
 

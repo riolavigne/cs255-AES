@@ -49,6 +49,21 @@ function Encrypt(plainText, group) {
 
 }
 
+//str is a ... string
+//but! key is a bit array
+function strToAESBitArray(str, key) {
+  //todo: size has to be 0 mod 128
+  var a = new sjcl.cipher.aes(key);
+  return a.encrypt(sjcl.codec.utf8String.toBits(str));
+}
+
+//Here, cphr and key are both bit arrays
+function AESBitArrToString(cphr, key) {
+  //padding...?
+  var a = new sjcl.cipher.aes(key);
+  return a.decrypt(cphr).toString(); //this is the correct method...?
+}
+
 // Return the decryption of the message for the given group, in the form of a string.
 // Throws an error in case the string is not properly encrypted.
 //
@@ -76,40 +91,83 @@ function Decrypt(cipherText, group) {
 function GenerateKey(group) {
 
   // CS255-todo: Well this needs some work...
-  var key = 'CS255-todo';
-
-  /* As for exactly what needs to be done here...
-     We need to provide keys that are indistinguishable from random
-     using the window.crpyto.getRandomValues command. But then, what
-     process turns that into a key? Does a key have to be a string?
-  */
+  var salt = GetRandomValues(4);
+  //is this a good idea?
+  var key = sjcl.misc.pbkdf2(group, salt, null, 128, null);
+  //As far as I can tell, this is sufficient!
 
   keys[group] = key;
   SaveKeys();
 }
 
+//for debugging
+function GenerateStupidKey(group) {
+  var key = group
+  keys[group] = key;
+  SaveKeys(); 
+}
+
 // Take the current group keys, and save them to disk.
+
+//this depends on:
+//  master_key
+//  the fact that everything's a bit array
 function SaveKeys() {
   
   // CS255-todo: plaintext keys going to disk?
-  var key_str = JSON.stringify(keys);
+  //Store them with the password
+  var encrypted_keys = [];
+  var a = new sjcl.cipher.aes(master_key);
+  for(var i = 0;i < keys.length;i++) {
+    encrypted_keys[i] = a.encrypt(keys[i]);
+  }
+  var key_str = JSON.stringify(encrypted_keys);
 
   cs255.localStorage.setItem('facebook-keys-' + my_username, key_str);
 }
+
+//we know these are 128-bit => no padding needed.
+//everything is a bit array.
+/*function encryptKey(toEncrypt, master_key) {
+  var a = new sjcl.cipher.aes(master_key);
+  return a.encrypt(toEncrypt);
+}*/
 
 // Load the group keys from disk.
 function LoadKeys() {
   keys = {}; // Reset the keys.
   var saved = cs255.localStorage.getItem('facebook-keys-' + my_username);
+  //TODO: recreate master key
   if (saved) {
-    // CS255-todo: plaintext keys were on disk?
-    keys = JSON.parse(saved);
+    //this should give bit arrays, but we need to test this!
+    var encrypted_keys = JSON.parse(saved);
+    var a = new sjcl.cipher.aes(master_key);
+    for(var i = 0;i < encrypted_keys.length;i++) {
+      keys[i] = a.decrypt(encrypted_keys[i]);
+    }
   }
 }
+
+//generate master key from password and salt
+//the former is a string, the latter a bit array
+// what is returned needs to be 128 bits
+function recreate_master_key(password,salt) {
+  return salt; //debugging.
+}
+
 
 function identityHash(password, salt, dumb, dumber, dumbest) {
     return salt;
 }
+
+/*function sha1(str) { TODO?
+  var h0 = 0x67452301;
+  var h1 = 0xefcdab89;
+  var h2 = 0x98badcfe;
+  var h3 = 0x10325476;
+  var h4 = 0xc3d2e1f0;
+
+}*/
 
 // should run when user not logged in
 function LoginUser() {
@@ -126,7 +184,7 @@ function LoginUser() {
     var password;
 
     if (salt) { // user has created password already
-	password = prompt("Welcome back to facebook encryption!" +
+	password = prompt("Welcome back to Facebook encryption!" +
 			  "\nEnter your password: ");
 	console.log("password entered", password);
 	var keytry = sjcl.misc.pbkdf2(password, salt, null, 128, null);
@@ -140,7 +198,7 @@ function LoginUser() {
 			"\n Key and keytry: " + key + " :: " + keytry);
 	}
     } else { // user needs to create a password
-	password = prompt("Welcome to facebook encryption!" +
+	password = prompt("Welcome to Facebook encryption!" +
 			  "\nEnter a password: ");
 	console.log("new password", password);
 	salt = GetRandomValues(4); //new salt and store salt

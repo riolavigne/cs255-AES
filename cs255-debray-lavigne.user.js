@@ -1,7 +1,7 @@
 // ==UserScript==
-// @namespace      CS255-Lastname1-Lastname2
-// @name           CS255-Lastname1-Lastname2
-// @description    CS255-Lastname1-Lastname2 - CS255 Assignment 1
+// @namespace      CS255-Debray-LaVigne
+// @name           CS255-Debray-LaVigne
+// @description    CS255-Debray-LaVigne - CS255 Assignment 1
 // @version        1.5
 //
 // 
@@ -14,8 +14,8 @@
 // ==/UserScript==
 
 /*
-  Step 1: change @namespace, @name, and @description above.
-  Step 2: Change the filename to the format "CS255-Lastname1-Lastname2.user.js"
+  Step 1: change @namespace, @name, and @description above. (complete)
+  Step 2: Change the filename to the format "CS255-debray-lavigne.user.js" (done)
   Step 3: Install this file as an (unpacked) Chrome extension using manifest.json.
   Step 4: Fill in the functions below.
 */
@@ -77,6 +77,12 @@ function GenerateKey(group) {
 
   // CS255-todo: Well this needs some work...
   var key = 'CS255-todo';
+
+  /* As for exactly what needs to be done here...
+     We need to provide keys that are indistinguishable from random
+     using the window.crpyto.getRandomValues command. But then, what
+     process turns that into a key? Does a key have to be a string?
+  */
 
   keys[group] = key;
   SaveKeys();

@@ -27,7 +27,7 @@
 
 var my_username; // user signed in as
 var keys = {}; // association map of keys: group -> key
-
+var masterKey;
 // Some initialization functions are called at the very end of this script.
 // You only have to edit the top portion.
 
@@ -184,7 +184,12 @@ function LoadKeys() {
 //the former is a string, the latter a bit array
 // what is returned needs to be 128 bits
 function recreate_master_key(password,salt) {
-  return salt; //debugging.
+    console.log("salt", salt);
+    console.log("salt[0]", salt[0]);
+    console.log("salt size", sjcl.bitArray.bitLength(salt));
+    var smallKey = sjcl.bitArray.clamp(salt, 128);
+    console.log("clamped size", sjcl.bitArray.bitLength(smallKey));
+    return smallKey; //debugging.
 }
 
 
@@ -216,40 +221,43 @@ function LoginUser() {
 	console.log("session still active.");
 	return;
     }
-    var salt = cs255.localStorage.getItem("facebook-salt-" + my_username);
-    console.log("retrieved salt", salt);
+    var salt = JSON.parse(cs255.localStorage.getItem("facebook-salt-" + my_username));
     var password;
 
     if (salt) { // user has created password already
 	password = prompt("Welcome back to Facebook encryption!" +
 			  "\nEnter your password: ");
-	console.log("password entered", password);
-	var keytry = sjcl.misc.pbkdf2(password, salt, null, 128, null);
-	console.log("calculated key", keytry);
-	var key = cs255.localStorage.getItem("facebook-password-" + my_username);
-	console.log("found key", key);
-	if (keytry == key) {
-	    console.log("SUCCESSFUL LOGIN!");
+	var key = recreate_master_key(password, salt);
+	var aes = new sjcl.cipher.aes(key);
+	var encryptedKey = JSON.parse(
+	    cs255.localStorage.getItem("facebook-password-" + my_username));
+	console.log("encryptedKey", encryptedKey);
+	var decryptedKey = aes.decrypt(encryptedKey);
+	console.log("decryptedKey", decryptedKey);
+	if (sjcl.bitArray.equal(key, decryptedKey)) {
+	    console.log("Successful login");
+	    masterKey = key;
 	} else {
-	    console.log("Key does not match keytry." + 
-			"\n Key and keytry: " + key + " :: " + keytry);
+	    console.log("Unsuccessful login");
 	}
     } else { // user needs to create a password
 	password = prompt("Welcome to Facebook encryption!" +
 			  "\nEnter a password: ");
-	console.log("new password", password);
+	//salt = new Array(4);
+	console.log("ohai.");
 	salt = GetRandomValues(4); //new salt and store salt
-	console.log("new salt", salt);
-	cs255.localStorage.setItem("facebook-salt-" + my_username, salt);
-
-	// Create a 128-bit key from a password using the salt, with the default 
-	// number of iterations.
-	var key = sjcl.misc.pbkdf2(password, salt, null, 128, null);
-	console.log("stored key", key);
-	cs255.localStorage.setItem("facebook-password-" + my_username, key);
+	console.log("SALTYBITS", salt, sjcl.bitArray.bitLength(salt));
+	cs255.localStorage.setItem("facebook-salt-" + my_username, JSON.stringify(salt));
+	masterKey = recreate_master_key(password, salt);
+	console.log("DecryptedKey", masterKey);
+	var aes = new sjcl.cipher.aes(masterKey);
+	console.log(aes.encrypt);
+	var encryptedKey = aes.encrypt(masterKey);
+	console.log("Encrypted key", encryptedKey);
+	cs255.localStorage.setItem("facebook-password-" + my_username,
+				   JSON.stringify(encryptedKey));
+	console.log("User has successfully logged in");
     }
-    
-    console.log("User has logged in...");
     sessionStorage.setItem("facebook-user-"+my_username, true);
 }
 
@@ -279,7 +287,7 @@ function LoginUser() {
   should only be one block of data.
 
   decrypt: function(ciphertext)
-
+  
   This function decrypts the given ciphertext.  Again, the ciphertext argument
   should be an array of 4 integers.
 
@@ -986,7 +994,7 @@ sjcl.cipher.aes.prototype = {
    * @return {Array} The ciphertext.
    */
   encrypt: function(data) {
-    return this._crypt(data, 0);
+      return this._crypt(data, 0);
   },
 
   /**

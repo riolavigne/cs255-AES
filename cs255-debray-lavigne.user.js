@@ -152,62 +152,14 @@ function LoadKeys() {
 //the former is a string, the latter a bit array
 // what is returned needs to be 128 bits
 function recreate_master_key(password,salt) {
-    console.log("salt", salt);
-    console.log("salt[0]", salt[0]);
-    console.log("salt size", sjcl.bitArray.bitLength(salt));
-    var smallKey = sjcl.bitArray.clamp(salt, 128);
-    console.log("clamped size", sjcl.bitArray.bitLength(smallKey));
-    return smallKey; //debugging.
+    var hashed = sjcl.hash.sha256.hash(password + salt);
+    return sjcl.bitArray.clamp(hashed, 128); //this should work
 }
 
 
 function identityHash(password, salt, dumb, dumber, dumbest) {
     return salt;
 }
-
-
-// TODO: YES!
-function sha1(str) { 
-    var h0 = 0x67452301;
-    var h1 = 0xefcdab89;
-    var h2 = 0x98badcfe;
-    var h3 = 0x10325476;
-    var h4 = 0xc3d2e1f0;
-    
-    preprocessing(str);
-}
-
-function preprocessing(str) {
-    console.log("starting preprocessing");
-    // convert str to bitarray
-    var msg = sjcl.codec.utf8String.toBits(str);
-    console.log("MESSAGE", msg, sjcl.bitArray.bitLength(msg));
-
-    // append 1
-    var one = new Array(1);
-    one[0] = sjcl.bitArray.partial(1, 1, true); // x has been shifted (probably)
-    console.log("ONE", one, sjcl.bitArray.getPartial(one));
-    var c = sjcl.bitArray.concat(msg, one);
-    console.log("MSG+1", c, sjcl.bitArray.bitLength(c)); // SUCCESS? (probably)
-
-    // append 0 to 512 bits until |str| = 0 mod 512
-    var padLen = (sjcl.bitArray.bitLength(msg) + 1) % 512;
-    var pad = new Array(Math.floor(padLen / 32));
-    for (var i = 1; i < padLen; i++){
-	pad[i] = 0;
-    }
-    var partialPad = new Array(1);
-    partialPad - sjcl.bitArray.partial(padLen % 32, 0, true);
-    pad = sjcl.bitArray.concat(pad, partialPad);
-    
-
-    var padded = sjcl.bitArray.concat(c, pad);
-    console.log("PADDED", padded, sjcl.bitArray.bitLength(padded));
-
-    // return a bitArray of the str
-    return padded;
-}
-
 
 // should run when user not logged in
 function LoginUser() {
@@ -222,7 +174,7 @@ function LoginUser() {
     var salt = JSON.parse(cs255.localStorage.getItem("facebook-salt-" + my_username));
     var password;
 
-    if (!salt) { // user has created password already
+    if (salt) { // user has created password already
 	password = prompt("Welcome back to Facebook encryption!" +
 			  "\nEnter your password: ");
 	var key = recreate_master_key(password, salt);
@@ -247,12 +199,9 @@ function LoginUser() {
 	console.log("SALTYBITS", salt, sjcl.bitArray.bitLength(salt));
 	cs255.localStorage.setItem("facebook-salt-" + my_username, JSON.stringify(salt));
 
-	sha1(password+salt);
-
 	masterKey = recreate_master_key(password, salt);
 	console.log("DecryptedKey", masterKey);
 	var aes = new sjcl.cipher.aes(masterKey);
-	console.log(aes.encrypt);
 	var encryptedKey = aes.encrypt(masterKey);
 	console.log("Encrypted key", encryptedKey);
 	cs255.localStorage.setItem("facebook-password-" + my_username,

@@ -55,12 +55,16 @@ function Encrypt(plainText, group) {
 function strToAESBitArray(str, key) {
   var a = new sjcl.cipher.aes(key);
   var bits = sjcl.codec.utf8String.toBits(str);
-  var toPad = padSizeOf(sjcl.bitArray.bitLength(bits));
-  for(var i = 0;i < toPad - 1;i++) {
-    //this is inefficient. So it goes.
-    bitArrayPush(bits,0);
+  var toPad = padSizeOf(sjcl.bitArray.bitLength(bits)) - 1; //for the 1
+  //padding format: 1000...000
+  bits = concat(bits,sjcl.bitArray.partial(1,1,0));
+  while (toPad > 32) {
+    var partialArray = sjcl.bitArray.partial(32,0,0);
+    bits = concat(bits,partialArray);
+    toPad -= 32;
   }
-  bitArrayPush(bits,1);
+  var partialArray = sjcl.bitArray.partial(toPad,0,0);
+  bits = concat(bits,partialArray);
   return a.encrypt();
 }
 
@@ -74,26 +78,24 @@ function padSizeOf(number) {
   }
 }
 
-/*
-How are we supposed to concatenate two bit arrays if we don't have a
-usable method for making a bit array!?
-PLEASE tell me I'm missing someting somewhere.
-*/
-//push bit next (0 or 1) onto the end of arr.
-function bitArrayPush(arr,next) {
-  last_int = arr[arr.length - 1];
-
-}
-//remove last entry and return it
-function bitArrayPop(arr) {
-
-}
-
-//Here, cphr and key are both bit arrays
+//Here, cphr and key are both bit arrays.
+//This DOES decrypt things, which might be unclear.
 function AESBitArrToString(cphr, key) {
-  //padding...?
   var a = new sjcl.cipher.aes(key);
-  return a.decrypt(cphr).toString(); //this is the correct method...?
+  var padded_stuff = a.decrypt(cphr);
+  var popped = 0;
+  while (popped == 0) { //do I need to use ===?
+    popBitArray(cphr);
+  }
+  return sjcl.utf8String.fromBits(cphr);
+}
+
+//removes the last element and returns it.
+//arrays are passed by reference, right?
+function popBitArray(arr) {
+  var lastElem = sjcl.bitArray.bitSlice(arr,sjcl.bitArray.bitLength(arr) - 1);
+  var toReturn = lastELem[0]; //since lastElem is a bit array
+  arr = sjcl.bitArray.bitSlice(arr,0,sjcl.bitArray.bitLength(arr) - 2)
 }
 
 // Return the decryption of the message for the given group, in the form of a string.
@@ -105,13 +107,14 @@ function AESBitArrToString(cphr, key) {
 function Decrypt(cipherText, group) {
 
   // CS255-todo: implement decryption on encrypted messages
+  // padding is fixed via a bit-slice
 
-  if (cipherText.indexOf('rot13:') == 0) {
+  if (cipherText.indexOf('aes:') == 0) {
 
     // decrypt, ignore the tag.
-    var decryptedMsg = rot13(cipherText.slice(6));
-    return decryptedMsg;
-
+    var noTag = cipherText.slice(4);
+    var plaintext = AESBitArrToString(sjcl.base64.toBits(noTag));
+    return plaintext;
   } else {
     throw "not encrypted";
   }

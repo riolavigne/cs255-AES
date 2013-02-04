@@ -39,7 +39,7 @@ var masterKey;
 function Encrypt(plainText, group) {
   //console.log("Plaintext is " + plainText);
   // CS255-todo: encrypt the plainText, using key for the group.
-  if ((plainText.indexOf('aes:') == 0) || (plainText.length < 1)) {
+  if ((plainText.indexOf('rot13:') == 0) || (plainText.length < 1)) {
     // already done, or blank
     alert("Try entering a message (the button works only once)");
     return plainText;
@@ -86,34 +86,11 @@ function strToAESBitArray(str, key) {
   return a.encrypt(bits);
 }
 
-//accepts a number of bits, returns the number that need to be padded.
-//Rules: always padded to a multiple of 128, always >0 padding
-function padSizeOf(number) {
-  if (number % 128 == 0) {
-    return 128;
-  } else {
-    return 128 - (number % 128);
-  }
-}
-
-//Here, cphr and key are both bit arrays.
-//This DOES decrypt things, which might be unclear.
+//Here, cphr and key are both bit arrays
 function AESBitArrToString(cphr, key) {
+  //padding...?
   var a = new sjcl.cipher.aes(key);
-  var padded_stuff = a.decrypt(cphr);
-  var popped = 0;
-  while (popped == 0) { //do I need to use ===?
-    popBitArray(cphr);
-  }
-  return sjcl.utf8String.fromBits(cphr);
-}
-
-//removes the last element and returns it.
-//arrays are passed by reference, right?
-function popBitArray(arr) {
-  var lastElem = sjcl.bitArray.bitSlice(arr,sjcl.bitArray.bitLength(arr) - 1);
-  var toReturn = lastELem[0]; //since lastElem is a bit array
-  arr = sjcl.bitArray.bitSlice(arr,0,sjcl.bitArray.bitLength(arr) - 2)
+  return a.decrypt(cphr).toString(); //this is the correct method...?
 }
 
 // Return the decryption of the message for the given group, in the form of a string.
@@ -125,9 +102,8 @@ function popBitArray(arr) {
 function Decrypt(cipherText, group) {
 
   // CS255-todo: implement decryption on encrypted messages
-  // padding is fixed via a bit-slice
 
-  if (cipherText.indexOf('aes:') == 0) {
+  if (cipherText.indexOf('rot13:') == 0) {
 
     // decrypt, ignore the tag.
     var noTag = cipherText.slice(4);
@@ -206,32 +182,14 @@ function LoadKeys() {
 //the former is a string, the latter a bit array
 // what is returned needs to be 128 bits
 function recreate_master_key(password,salt) {
-    console.log("salt", salt);
-    console.log("salt[0]", salt[0]);
-    console.log("salt size", sjcl.bitArray.bitLength(salt));
-    var smallKey = sjcl.bitArray.clamp(salt, 128);
-    console.log("clamped size", sjcl.bitArray.bitLength(smallKey));
-    return smallKey; //debugging.
+    var hashed = sjcl.hash.sha256.hash(password + salt);
+    return sjcl.bitArray.clamp(hashed, 128); //this should work
 }
 
 
 function identityHash(password, salt, dumb, dumber, dumbest) {
     return salt;
 }
-
-/*function sha1(str) { TODO?
-  var h0 = 0x67452301;
-  var h1 = 0xefcdab89;
-  var h2 = 0x98badcfe;
-  var h3 = 0x10325476;
-  var h4 = 0xc3d2e1f0;
-
-  var input = sjcl.codec.utf8String.toBits(str);
-  //var toAppend = [1];
-  //We need to append a 1 to the end of the array. I think this works
-  input[input.length - 1] += 1;
-
-}*/
 
 // should run when user not logged in
 function LoginUser() {
@@ -270,10 +228,10 @@ function LoginUser() {
 	salt = GetRandomValues(4); //new salt and store salt
 	console.log("SALTYBITS", salt, sjcl.bitArray.bitLength(salt));
 	cs255.localStorage.setItem("facebook-salt-" + my_username, JSON.stringify(salt));
+
 	masterKey = recreate_master_key(password, salt);
 	console.log("DecryptedKey", masterKey);
 	var aes = new sjcl.cipher.aes(masterKey);
-	console.log(aes.encrypt);
 	var encryptedKey = aes.encrypt(masterKey);
 	console.log("Encrypted key", encryptedKey);
 	cs255.localStorage.setItem("facebook-password-" + my_username,

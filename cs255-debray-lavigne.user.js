@@ -37,7 +37,6 @@ var masterKey;
 // @param {String} group Group name.
 // @return {String} Encryption of the plaintext, encoded as a string.
 function Encrypt(plainText, group) {
-  //console.log("Plaintext is " + plainText);
   // CS255-todo: encrypt the plainText, using key for the group.
   if ((plainText.indexOf('rot13:') == 0) || (plainText.length < 1)) {
     // already done, or blank
@@ -45,11 +44,7 @@ function Encrypt(plainText, group) {
     return plainText;
   } else {
     // encrypt, add tag.
-    //var local_bits = strToAESBitArray(plainText,keys[group]);
-    //obviously, we're removing this, right?
-    var updog = "dummy_password";
-    var local_bits = strToAESBitArray(plainText,sjcl.codec.utf8String.toBits(updog));
-    console.log("strToAESBitArray left");
+    var local_bits = strToAESBitArray(plainText,keys[group]);
     return 'aes:' + sjcl.codec.base64.fromBits(local_bits);
   }
 
@@ -57,33 +52,20 @@ function Encrypt(plainText, group) {
 
 //str is a ... string
 //but! key is a bit array
-//todo: factor
 function strToAESBitArray(str, key) {
-  console.log("strToAESBitArray entered");
   var a = new sjcl.cipher.aes(key);
   var bits = sjcl.codec.utf8String.toBits(str);
   var toPad = padSizeOf(sjcl.bitArray.bitLength(bits)) - 1; //for the 1
-  console.log("Sizes: message size is " + sjcl.bitArray.bitLength(bits) + ", which is padded with " + toPad + " to get " + (sjcl.bitArray.bitLength(bits) + toPad) + ", which is " + ((sjcl.bitArray.bitLength(bits) + toPad) % 128) + "mod 128.");
-  console.log("Created the local variables.");
   //padding format: 1000...000
-  var toConcat = new Array;
-  toConcat[0] = sjcl.bitArray.partial(1,1,0);
-  bits = sjcl.bitArray.concat(bits,toConcat);
-  console.log("Appended the 1.");
+  bits = concat(bits,sjcl.bitArray.partial(1,1,0));
   while (toPad > 32) {
-    var partialArray = new Array;
-    partialArray[0] = sjcl.bitArray.partial(32,0,0);
-    bits = sjcl.bitArray.concat(bits,partialArray);
+    var partialArray = sjcl.bitArray.partial(32,0,0);
+    bits = concat(bits,partialArray);
     toPad -= 32;
-    console.log("Appended a word.")
   }
-  var partialArray = new Array;
-  partialArray[0] = sjcl.bitArray.partial(toPad,0,0);
-  bits = sjcl.bitArray.concat(bits,partialArray);
-  console.log("Appended all of the zeroes. Size is now " + sjcl.bitArray.bitLength(bits) + ".");
-  //now I need to split this into blocks
-  //...and factor in a counter somehow
-  return a.encrypt(bits);
+  var partialArray = sjcl.bitArray.partial(toPad,0,0);
+  bits = concat(bits,partialArray);
+  return a.encrypt();
 }
 
 //Here, cphr and key are both bit arrays
@@ -107,8 +89,7 @@ function Decrypt(cipherText, group) {
 
     // decrypt, ignore the tag.
     var noTag = cipherText.slice(4);
-    //tjhis is a dummy!
-    var plaintext = AESBitArrToString(sjcl.codec.base64.toBits(noTag),sjcl.codec.utf8String.toBits("dummy_password"));
+    var plaintext = AESBitArrToString(sjcl.base64.toBits(noTag));
     return plaintext;
   } else {
     throw "not encrypted";

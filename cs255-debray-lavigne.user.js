@@ -89,22 +89,12 @@ function Decrypt(cipherText, group) {
 //
 // @param {String} group Group name.
 function GenerateKey(group) {
-
-  // CS255-todo: Well this needs some work...
-  var salt = GetRandomValues(4);
-  //is this a good idea?
-  var key = sjcl.misc.pbkdf2(group, salt, null, 128, null);
-  //As far as I can tell, this is sufficient!
-
-  keys[group] = key;
-  SaveKeys();
-}
-
-//for debugging
-function GenerateStupidKey(group) {
-  var key = group
-  keys[group] = key;
-  SaveKeys(); 
+    var salt = GetRandomValues(4); // salt good for entropy
+    var key = sjcl.bitArray.clamp(sjcl.misc.pbkdf2(group, salt, null, 128, null),
+				  128 - 32); // want space for an IV
+    console.log("Generated Key " + group, key);
+    keys[group] = key;
+    SaveKeys();
 }
 
 // Take the current group keys, and save them to disk.
@@ -113,38 +103,22 @@ function GenerateStupidKey(group) {
 //  master_key
 //  the fact that everything's a bit array
 function SaveKeys() {
-  
-  // CS255-todo: plaintext keys going to disk?
-  //Store them with the password
-  var encrypted_keys = [];
-  var a = new sjcl.cipher.aes(master_key);
-  for(var i = 0;i < keys.length;i++) {
-    encrypted_keys[i] = a.encrypt(keys[i]);
-  }
-  var key_str = JSON.stringify(encrypted_keys);
-
-  cs255.localStorage.setItem('facebook-keys-' + my_username, key_str);
+    //Store them with the password
+    var a = new sjcl.cipher.aes(masterKey);
+    var keyStr = JSON.stringify(keys);
+    var encryptedKeys = a.encrypt(keyStr);
+    cs255.localStorage.setItem('facebook-keys-' + my_username, encryptedKeys);
 }
-
-//we know these are 128-bit => no padding needed.
-//everything is a bit array.
-/*function encryptKey(toEncrypt, master_key) {
-  var a = new sjcl.cipher.aes(master_key);
-  return a.encrypt(toEncrypt);
-}*/
 
 // Load the group keys from disk.
 function LoadKeys() {
+    console.log("loading keys...");
   keys = {}; // Reset the keys.
   var saved = cs255.localStorage.getItem('facebook-keys-' + my_username);
-  //TODO: recreate master key
   if (saved) {
-    //this should give bit arrays, but we need to test this!
-    var encrypted_keys = JSON.parse(saved);
-    var a = new sjcl.cipher.aes(master_key);
-    for(var i = 0;i < encrypted_keys.length;i++) {
-      keys[i] = a.decrypt(encrypted_keys[i]);
-    }
+      var a = new sjcl.cipher.aes(masterKey);
+      decryptedStr = a.decrypt(saved);
+      keys = JSON.parse(decryptedStr);
   }
 }
 
@@ -208,6 +182,8 @@ function LoginUser() {
 				   JSON.stringify(encryptedKey));
 	console.log("User has successfully logged in");
     }
+    
+    console.log("Master key size", sjcl.bitArray.bitLength(masterKey));
     sessionStorage.setItem("facebook-user-"+my_username, true);
 }
 
@@ -624,6 +600,7 @@ function UpdateKeysTable() {
 }
 
 function AddKey() {
+    console.log("Adding a key...");
   var g = document.getElementById('new-key-group').value;
   if (g.length < 1) {
     alert("You need to set a group");
@@ -1670,11 +1647,11 @@ sjcl.hash.sha256.prototype = {
 
 // This is the initialization
 SetupUsernames();
+LoginUser();
 LoadKeys();
 AddElements();
 UpdateKeysTable();
 RegisterChangeEvents();
-LoginUser();
 //cs255.localStorage.clear();
 
 console.log("CS255 script finished loading.");

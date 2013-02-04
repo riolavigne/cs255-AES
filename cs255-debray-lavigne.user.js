@@ -38,13 +38,14 @@ var keys = {}; // association map of keys: group -> key
 // @return {String} Encryption of the plaintext, encoded as a string.
 function Encrypt(plainText, group) {
   // CS255-todo: encrypt the plainText, using key for the group.
-  if ((plainText.indexOf('rot13:') == 0) || (plainText.length < 1)) {
+  if ((plainText.indexOf('aes:') == 0) || (plainText.length < 1)) {
     // already done, or blank
     alert("Try entering a message (the button works only once)");
     return plainText;
   } else {
     // encrypt, add tag.
-    return 'rot13:' + rot13(plainText);
+    var local_bits = strToAESBitArray(plainText,keys[group]);
+    return 'aes:' + sjcl.codec.base64.fromBits(local_bits);
   }
 
 }
@@ -52,9 +53,40 @@ function Encrypt(plainText, group) {
 //str is a ... string
 //but! key is a bit array
 function strToAESBitArray(str, key) {
-  //todo: size has to be 0 mod 128
   var a = new sjcl.cipher.aes(key);
-  return a.encrypt(sjcl.codec.utf8String.toBits(str));
+  var bits = sjcl.codec.utf8String.toBits(str);
+  var toPad = padSizeOf(sjcl.bitArray.bitLength(bits));
+  for(var i = 0;i < toPad - 1;i++) {
+    //this is inefficient. So it goes.
+    bitArrayPush(bits,0);
+  }
+  bitArrayPush(bits,1);
+  return a.encrypt();
+}
+
+//accepts a number of bits, returns the number that need to be padded.
+//Rules: always padded to a multiple of 128, always >0 padding
+function padSizeOf(number) {
+  if (number % 128 == 0) {
+    return 128;
+  } else {
+    return 128 - (number % 128);
+  }
+}
+
+/*
+How are we supposed to concatenate two bit arrays if we don't have a
+usable method for making a bit array!?
+PLEASE tell me I'm missing someting somewhere.
+*/
+//push bit next (0 or 1) onto the end of arr.
+function bitArrayPush(arr,next) {
+  last_int = arr[arr.length - 1];
+
+}
+//remove last entry and return it
+function bitArrayPop(arr) {
+
 }
 
 //Here, cphr and key are both bit arrays
@@ -166,6 +198,11 @@ function identityHash(password, salt, dumb, dumber, dumbest) {
   var h2 = 0x98badcfe;
   var h3 = 0x10325476;
   var h4 = 0xc3d2e1f0;
+
+  var input = sjcl.codec.utf8String.toBits(str);
+  //var toAppend = [1];
+  //We need to append a 1 to the end of the array. I think this works
+  input[input.length - 1] += 1;
 
 }*/
 

@@ -1,0 +1,40 @@
+% The writeup to submit for the first milestone.
+\documentclass{amsart}
+\input{macros}
+\begin{document}
+\title{Milestone 1 Writeup}
+\author{Arun Debray and Rio LaVigne\\\today}
+\maketitle
+%your writeup should discuss all the design decisions you made for the bullet points from Section 2 and argue why the implementation of each bullet is secure.
+
+%we do expect a proof-like explanation of why your scheme is secure under the guidelines given by the assignment. A good write-up will include a detailed conceptual description of all encryption, decryption, storage, and generation operations and an argument explaining how an attacker that can break some part of your scheme can also break some underlying primitive that is believed to be secure.
+
+In this writeup, we will illustrate that each of the functions that we implemented is secure.
+%the aforementioned bullet points:
+%	The Encrypt() and Decrypt() functions
+\section{The \texttt{Encrypt()} and \texttt{Decrypt()} methods}%note that RCM is todo
+These methods implement an AES-128 block cipher operating in random counter mode. Specifically, if $K$ is the key for a given group, then $E(K,m)$ is given as follows:
+\begin{enumerate}
+\item First, the message is padded so that its length is a multiple of $128$; then, it is chopped into $128$-bit slices: $m = m[0]\conc m[1]\conc\dots\conc m[k]$ for some $k$.
+\item Then, each block is run through AES-128: $c[i] = \operatorname{AES-128}(\mathrm{IV} + i\conc K,m[i])$. The $\mathrm{IV}$ is a randomly generated nonce that is incremented with every use of the group key in a given session.
+\item Then, the ciphertext is assembled from the blocks: $c = (\mathrm{IV} + i) \conc c[1] \conc c[2] \conc\dots\conc c[k]$.
+\end{enumerate}
+In this system, the key $K$ is used many times in a given group, but each key-nonce pair is used exactly once. Thus, this system is not vulnerable to many-time pad attacks; since the nonces are 32-bit integers, then the probability of a random collision is negligible. Thus, a successful attack on this system is equivalent to a successful attack on AES; as discussed in class, randomized counter mode is as secure as the PRP it is based upon. And since AES is believed to be secure, this system is secure.
+%	GenerateKeys()
+\section{The \texttt{GenerateKeys()} method}
+This method calls \verb+sjcl.misc.pbkdf2()+ as a PRF, accepting a 128-bit random salt and the group name as arguments. The salt is generated with the provided function \verb+GetRandomValues()+, and is therefore truly random, and \verb+sjcl.misc.pbkdf2()+ is a secure PRF under the assumption that the salt is random, so this function is secure.
+%	SaveKeys() and LoadKeys()
+\section{The \texttt{SaveKeys()} and \texttt{LoadKeys()} methods}
+These methods rely on the same helper functions that \verb+Encrypt()+ and \verb+Decrypt()+ do; they implement the same AES-128 cipher in randomized counter mode. As discussed above, this is as secure as AES is. However, the differences are meaningful: in this case, the key is a master key generated from the password, rather than the shared group key.
+
+Thus, if Eve knows the group key for Bob's group $G$, she cannot gain any meaningful information about the rest of Bob's encrypted groups, since they have been encrypted in randomized counter mode; the additional obstacle of the nonce prevents Eve from gaining information about the master key.
+
+This also relies on the assumption that the master key is securely generated, which was shown in the previous section.
+\section{Other questions}
+%Your write-up should also discuss the following questions:
+% 1. What are some of the biggest issues with doing cryptography in the browser? Why might we want to do it anyhow?
+Doing cryptography in the browser is both difficult and insecure. Web development is particularly prone to conflicting standards, browsers, etc.; what works in Chrome may not work anywhere else (as in this case) and putting requirements on the user makes the cryptosystem less viable. Alternatively, different browsers might cause silent errors, encoding information insecurely (because of, for example, an incorrectly implemented random number generator). Moreover, storage is plagued by several issues: websites tend to interfere with it in unpredictable ways and thus setting up a consistent and persistent system is difficult. Additionally, the act of transmitting information over the Internet adds additional security issues: it forces the encryption scheme to depend on other protocols and systems being secure, which is not always the case: a user might be using free wireless that allows an adversary to spy on the data or even alter it, for example.
+
+% 2. How could somebody go about circumventing the security of your implementation, if they really wanted to? (e.g. side-channel attacks)
+If one wanted to break this system, there are several possible attacks. Many of these center around the user: if the adversary gains access to the master password in some manner (e.g. asking the user, intercepting it through an insecure network, or even finding an open, logged-in computer), then the entire cryptosystem is useless: the adversary can read all messages that the user as able to, impersonate the user, etc. Similarly, passwords can be compromised by attacks such as a common password attack, a dictionary attack, etc. If a user uses a common password that can be guessed, the same problems occur: with the master password, the attacker has access to all keys, and therefore can imitate the user, reading and writing messages. Additionally, one might attack this system by intercepting information; there is currently no message authentication, so an active attacker can intercept messages and replace them with gibberish. The attacker might not know the contents, but the users have no way of detecting that such an attack has or has not happened.
+\end{document}

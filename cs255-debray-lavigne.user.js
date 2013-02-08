@@ -71,48 +71,56 @@ function xorBits(a, b) {
 //"Beware of errors in the following code. I have only proven it
 // correct, not actually tried it"
 function tryAgainXor(a,b) {
-	var sign = sjcl.bitArray.bitLength(a) - sjcl.bitArray.bitLength(b));
-	var partialLength = sjcl.bitArray.getPartial(sjcl.bitArray.partial(32,a[a.length - 1],0);
-	var index_mask = (1 << 32 - partialLength - 1);
-	if (sign > 0) {
-		return tryAgainXor(b,a);
-	} else if (sign < 0) {//WLOG assume a is shorter than b
-		a[a.length - 1] ^= index_mask; //now the padding is entirely zeros
-		var x = new Array;
-		for(var i = 0;i < a.length;i++) { //...so we can just xor them!
-			x = sjcl.bitArray.concat(x, [a[i] ^ b[i]]);
-		}
-		return x;
-	} else { //they have the same length
-		var x = new Array;
-		for(var i = 0;i < a.length;i++) { //...so we can just xor them!
-			x = sjcl.bitArray.concat(x, [a[i] ^ b[i]]);
-		}
-		x[a.length - 1] ^= index_mask; //since the padding had been lost.
-		return x;
+    var sign = sjcl.bitArray.bitLength(a) - sjcl.bitArray.bitLength(b);
+    var partialLength = sjcl.bitArray.getPartial(
+	sjcl.bitArray.partial(32,a[a.length - 1], 0));
+    var index_mask = (1 << 32 - partialLength - 1);
+    if (sign > 0) {
+	return tryAgainXor(b,a);
+    } else if (sign < 0) {//WLOG assume a is shorter than b
+	console.log("before padding..", a);
+	a[a.length - 1] ^= index_mask; //now the padding is entirely zeros
+	console.log("after no padding..", a);
+	var x = new Array;
+	for(var i = 0;i < a.length;i++) { //...so we can just xor them!
+	    x = sjcl.bitArray.concat(x, [a[i] ^ b[i]]);
 	}
+	return x;
+    } else { //they have the same length
+	var x = new Array;
+	for(var i = 0;i < a.length;i++) { //...so we can just xor them!
+	    x = sjcl.bitArray.concat(x, [a[i] ^ b[i]]);
+	}
+	x[a.length - 1] ^= index_mask; //since the padding had been lost.
+	return x;
+    }
+}
+
+function xorTest() {
+    console.log("Simple test");
+    var a = sjcl.codec.utf8String.toBits('hello hello hello hello hello.');
+    var b = sjcl.codec.utf8String.toBits('hello hello hello hello hello.');
+    var c = tryAgainXor(a, b);
+    console.log("RESULT", a, b, c); 
 }
 
 //str is a ... string
 //but! key is a bit array
 function encryptString(key, str) {
-    // generate IV (3 * 32)
     var iv = GetRandomValues(3);
-    // appendable counter (32)
     var counter = new Array;
     counter[0] = 0;
-    // String to bits
     var bits = sjcl.codec.utf8String.toBits(str);
     var encrypted = new Array;
     var cipher = new sjcl.cipher.aes(key);
-    // XOR bits and IV+Ctr in 128-bit chuncks
     for (var i = 0; i < bits.length; i+=4) {
-	// encrypt IV + Ctr
 	var nonce = sjcl.bitArray.concat(iv, counter);
 	// xor with bits
 	nonce = cipher.encrypt(nonce);
 	console.log("nonce", nonce);
-	var curEnc = xorBits(bits.slice(i, i + 4), nonce); 
+	console.log("before", bits.slice(i, i + 4));
+	var curEnc = tryAgainXor(bits.slice(i, i + 4), nonce); 
+	console.log("after", curEnc);
 	encrypted = encrypted.concat(curEnc);
 	// increment counter
 	counter[0]++;
@@ -152,8 +160,7 @@ function decryptString(key, cipherText) {
     for (var i = 0; i < bits.length; i+=4) {
 	var nonce = sjcl.bitArray.concat(iv, counter);
 	nonce = cipher.encrypt(nonce);
-	var curDec = xorBits(bits.slice(i, i + 4), nonce);
-	curDec = xorBits(bits.slice(i, i + 4), nonce);
+	var curDec = tryAgainXor(bits.slice(i, i + 4), nonce);
 	decrypted = decrypted.concat(curDec);
 	counter[0]++;
     }
@@ -1737,6 +1744,7 @@ sjcl.hash.sha256.prototype = {
 
 // This is the initialization
 //cs255.localStorage.clear();
+//xorTest();
 SetupUsernames();
 LoginUser();
 LoadKeys();

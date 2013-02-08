@@ -67,6 +67,32 @@ function xorBits(a, b) {
     return x;
 }
 
+//here is the function Arun wrote for xoring two bit arrays.
+//"Beware of errors in the following code. I have only proven it
+// correct, not actually tried it"
+function tryAgainXor(a,b) {
+	var sign = sjcl.bitArray.bitLength(a) - sjcl.bitArray.bitLength(b));
+	var partialLength = sjcl.bitArray.getPartial(sjcl.bitArray.partial(32,a[a.length - 1],0);
+	var index_mask = (1 << 32 - partialLength - 1);
+	if (sign > 0) {
+		return tryAgainXor(b,a);
+	} else if (sign < 0) {//WLOG assume a is shorter than b
+		a[a.length - 1] ^= index_mask; //now the padding is entirely zeros
+		var x = new Array;
+		for(var i = 0;i < a.length;i++) { //...so we can just xor them!
+			x = sjcl.bitArray.concat(x, [a[i] ^ b[i]]);
+		}
+		return x;
+	} else { //they have the same length
+		var x = new Array;
+		for(var i = 0;i < a.length;i++) { //...so we can just xor them!
+			x = sjcl.bitArray.concat(x, [a[i] ^ b[i]]);
+		}
+		x[a.length - 1] ^= index_mask; //since the padding had been lost.
+		return x;
+	}
+}
+
 //str is a ... string
 //but! key is a bit array
 function encryptString(key, str) {

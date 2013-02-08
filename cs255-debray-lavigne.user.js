@@ -28,6 +28,7 @@
 var my_username; // user signed in as
 var keys = {}; // association map of keys: group -> key
 var masterKey;
+var ivLen = 3; // number of 32-bit integers in an iv
 
 function getMaster() {
     if (masterKey) return;
@@ -43,57 +44,41 @@ function getMaster() {
 // @param {String} group Group name.
 // @return {String} Encryption of the plaintext, encoded as a string.
 function Encrypt(plainText, group) {
-    if ((plainText.indexOf('aes:') == 0) || (plainText.length < 1)) {
-	// already done or blank
-	alert("Try entering a message (the button works only once)");
-	return plainText;
-    } else {
-	// encrypt, add tag.
-	var pw = sjcl.misc.pbkdf2(keys[group],
-				  cs255.localStorage.getItem(
-				      "facebook-salt-"+ my_username, null, 128, null));
-	var local_bits = encryptString(plainText,
-					 pw);
-	return 'aes:' + sjcl.codec.base64.fromBits(local_bits);
+    var salt = cs255.localStorage.getItem('facebook-salt-' + my_username);
+    console.log("salt", salt);
+    var key = sjcl.misc.pbkdf2(group, salt, null, 128, null);
+    console.log("key", key);
+    return encryptString(plainText);
+}
+
+function appendIV(bits, iv) {
+    for (var i = 0; i < iv.length; i++){
+	bits.push(iv[i]);
     }
+    return bits
 }
 
 //str is a ... string
 //but! key is a bit array
 function encryptString(str, key) {
-    var nonce = GetRandomValues(1);
-    var ctr = 0;
-    var enKey = sjcl.bitArray.clamp(key, 128 - 32);
-    var bits = padFn(sjcl.codec.utf8String.toBits(str));
-    // need to split into blocks
-    var toReturn = [];
-    for (var i = 0; i < bits.length; i += 4) {
-	var curKey = sjcl.bitArray.concat(enKey, nonce);
-	var aes = new sjcl.cipher.aes(curKey);
-	var curSlice = sjcl.bitArray.bitSlice(bits, 32 * i, 32 * i + 128);
-	toReturn = sjcl.bitArray.concat(toReturn, aes.encrypt(curSlice));
-    }
-    toReturn.push(nonce);
-    return toReturn;
-}
-
-// takes a bit array and pads it to a multiple of AES block size
-// format: 1000...0000
-function padFn(bits) {
-    var toPad = padSizeOf(sjcl.bitArray.bitLength(bits)) - 1; // for the 1
-    var toConcat = new Array;
-    toConcat[0] = sjcl.bitArray.partial(1, 1, 0);
-    bits = sjcl.bitArray.concat(bits, toConcat); // added 1
-    while (toPad > 32) {
-	var word = new Array(1);
-	word[0] = sjcl.bitArray.partial(32, 0, 0);
-	bits = sjcl.bitArray.concat(bits, word);
-	toPad -= 32;
-    }
-    var partial = new Array(1);
-    partial[0] = sjcl.bitArray.partial(toPad, 0, 0);
-    bits = sjcl.bitArray.concat(bits, partial);
-    return bits;
+    // generate IV (3 * 32)
+    var iv = GetRandomValues(3);
+    console.log("iv", iv);
+    // appendable counter (32)
+    var counter = new Array;
+    counter[0] = 0;
+    console.log("counter", counter, sjcl.bitArray.bitLength(counter));
+    // String to bits
+    var bits = sjcl.codec.utf8String.toBits(str);
+    // XOR bits and IV+Ctr word by word...
+    // append IV to end (push x2)
+    console.log("before bits", bits);
+    bits = appendIV(bits, iv);
+    console.log("bits", bits);
+    // make it base64 characters
+    var cipherText = sjcl.codec.base64.fromBits(bits);
+    // return
+    return cipherText;
 }
 
 // accepts a number of bits, returns the number that needs to be padded.
@@ -104,32 +89,21 @@ function padSizeOf(num) {
     return 128 - mod;
 }
 
+function getIV(bits) {
+    var iv = new Array(ivLen);
+    for (var i = ivLen - 1; i >= 0; i--) {
+	iv[ivLen - i - 1] = bits.pop();
+    }
+    return iv;
+}
 
 // cphr and key are both bit arrays.
-// TODO: make it not decrypt with a catch .___.
-function decryptBits(cphr, key) {
-    var nonce = cphr.pop();
-    var ctr = 0;
-    var ckey = sjcl.bitArray.clamp(key, 128 - 32);
-    var padded = [];
-    for (var i = 0; i < cphr.length; i += 4) {
-	var arr = new Array(1);
-	arr[0] = sjcl.bitArray.partial(32, nonce + ctr, true);
-	var currKey = sjcl.bitArray.concat(ckey, arr);
-	var curSlice = sjcl.bitArray.bitSlice(cphr, 32*i, 32*i + 128);
-	var aes = new sjcl.cipher.aes(currKey);
-	padded = sjcl.bitArray.concat(padded, aes.decrypt(curSlice));
-    }
-    var plaintext = "";
-    try {
-	for (var i = 0; i < sjcl.bitArray.bitLength(padded); i+= 8) {
-	    var curSlice = sjcl.bitArray.bitSlice(padded, i, i+ 8);
-	    plaintext += sjcl.codec.utf8String.fromBits(curSlice);
-	}
-    } catch (URIError){
-	// Wat?
-	return plaintext;
-    }
+function decryptBits(cipherText, key) {
+    var bits = sjcl.codec.base64.toBits(cipherText);
+    var iv = getIV(bits);
+    console.log("iv", iv);
+    var str = sjcl.codec.utf8String.fromBits(bits);
+    return str;
 }
 
 
@@ -140,21 +114,9 @@ function decryptBits(cphr, key) {
 // @param {String} group Group name.
 // @return {String} Decryption of the ciphertext.
 function Decrypt(cipherText, group) {
-    getMaster()
-    var pw = sjcl.misc.pbkdf2(keys[group],
-				  cs255.localStorage.getItem(
-				      "facebook-salt-"+ my_username, null, 128, null));
-    if (cipherText.indexOf('aes:') == 0) {
-	// decrypt, ignore the tag.
-	var noTag = cipherText.slice(4);
-	var salt = cs255.localStorage.getItem("facebook-salt-" + my_username);
-	var plaintext = decryptBits(sjcl.codec.base64.toBits(noTag),
-				    pw);
-	
-	return  plaintext;
-    } else {
-	throw "not encrypted";
-    }
+    var salt = JSON.parse(cs255.localStorage.getItem('facebook-salt-' + my_username));
+    var key = sjcl.misc.pbkdf2(group, salt, null, 128, null);
+    return decryptBits(cipherText, key);
 }
 
 // Generate a new key for the given group.
@@ -162,8 +124,7 @@ function Decrypt(cipherText, group) {
 // @param {String} group Group name.
 function GenerateKey(group) {
     var salt = GetRandomValues(4); // salt good for entropy
-    var key = sjcl.bitArray.clamp(sjcl.misc.pbkdf2(group, salt, null, 128, null),
-				  128 - 32); // want space for an IV
+    var key = sjcl.misc.pbkdf2(group, salt, null, 128, null);
     keys[group] = key;
     SaveKeys();
 }
@@ -176,30 +137,22 @@ function GenerateKey(group) {
 function SaveKeys() {
     // grab the master key if necessary
     getMaster();
-    //Store them with the password
     var keyStr = JSON.stringify(keys);
-    var encryptedKeys = encryptString(keyStr, masterKey);
-    cs255.localStorage.setItem('facebook-keys-' + my_username,
-			       sjcl.codec.base64.fromBits(encryptedKeys)); // base 64???
+    // TODO: encrypt keyStr
+    cs255.localStorage.setItem('facebook-keys-' + my_username, keyStr);
 }
 
 // Load the group keys from disk.
 function LoadKeys() {
     getMaster();
     keys = {}; // Reset the keys.
-    var saved = cs255.localStorage.getItem('facebook-keys-' + my_username);
-    if (saved) {
-	var stringKeys = decryptBits(sjcl.codec.base64.toBits(saved), masterKey);
-	if (stringKeys) {
-	    keys = JSON.parse(stringKeys);
-	}
-  }
+    var keyStr = cs255.localStorage.getItem('facebook-keys-' + my_username);
+    // TODO: decrypt keyStr
+    if (keyStr) {
+	keys = JSON.parse(keyStr)
+    }
 }
 
-function ClearKeys() {
-    keys = {};
-    cs255.localStorage.setItem('facebook-keys-' + my_username, false);
-}
 
 //generate master key from password and salt
 //the former is a string, the latter a bit array
@@ -209,53 +162,47 @@ function recreate_master_key(password,salt) {
     return hashed;
 }
 
+function returnUser(verifier, salt) {
+    var salt = JSON.parse(salt);
+    var password = prompt("Welcome back to Facebook encryption!" +
+		      "\nEnter your password: ");
+    masterKey = recreate_master_key("fish", salt);
+    // TODO: verify verifier
+}
+
+function newUser(verifier) {
+    var password = prompt("Welcome to Facebook encryption!" +
+		      "\nEnter a password: ");
+    var salt = GetRandomValues(4);
+    cs255.localStorage.setItem("facebook-salt-" + my_username, JSON.stringify(salt));
+    
+    masterKey = recreate_master_key("fish", salt);
+    sessionStorage.setItem("facebook-master-" + my_username,
+			   JSON.stringify(masterKey));
+    // TODO: encrypt verifier
+}
+
 // should run when user not logged in
 // TODO: decompose ... such terrible terrible style T__T
 function LoginUser() {
-    var verified = sjcl.bitArray.clamp(
-	sjcl.codec.utf8String.toBits("password verified"), 128);
-    // will encrypt to verify things..
+    // used to verify if user has entered the correct password
+    // TODO: make encrypt, not RAW
+    var verified = "password verified";
+
     if (sessionStorage.getItem("facebook-user-" + my_username)) {
 	console.log("session still active.");
 	return;
     }
     var salt = cs255.localStorage.getItem("facebook-salt-" + my_username);
-    var password;
     
     if (salt) { // user has created password already
-	salt = 	JSON.parse(salt);
-	password = prompt("Welcome back to Facebook encryption!" +
-			  "\nEnter your password: ");
-	var key = recreate_master_key(password, salt);
-	var aes = new sjcl.cipher.aes(key);
-	var encryptedVerifier = JSON.parse(
-	    cs255.localStorage.getItem("facebook-verify-" + my_username));
-	var decryptedVerifier = aes.decrypt(encryptedVerifier);
-	if (sjcl.bitArray.equal(verified, decryptedVerifier)) {
-	    console.log("Successful login");
-	    masterKey = key;
-	    sessionStorage.setItem("facebook-master-" + my_username,
-				   JSON.stringify(masterKey));
-	} else {
-	    console.log("Unsuccessful login");
-	}		    
-    } else { // user needs to create a password
-	password = prompt("Welcome to Facebook encryption!" +
-			  "\nEnter a password: ");
-	salt = GetRandomValues(4); //new salt and store salt
-	cs255.localStorage.setItem("facebook-salt-" + my_username, JSON.stringify(salt));
-	masterKey = recreate_master_key(password, salt);
-	sessionStorage.setItem("facebook-master-" + my_username,
-			       JSON.stringify(masterKey));
-	// encrypt a verifier
-	var aes = new sjcl.cipher.aes(masterKey);
-	var encryptedVerify = aes.encrypt((verified));
-	cs255.localStorage.setItem("facebook-verify-" + my_username,
-				   JSON.stringify(encryptedVerify));
-	console.log("User has successfully logged in");
+	returnUser(verified, salt);
+    } else { // new user
+	newUser(verified);
     }
     
-    sessionStorage.setItem("facebook-user-"+my_username, true);
+    // FOR DEBUGGING
+    sessionStorage.setItem("facebook-user-" + my_username, true);
 }
 
 /////////////////////////////////////////////////////////
@@ -1717,7 +1664,7 @@ sjcl.hash.sha256.prototype = {
 
 // This is the initialization
 //ClearKeys();
-//cs255.localStorage.clear();
+cs255.localStorage.clear();
 SetupUsernames();
 LoginUser();
 LoadKeys();

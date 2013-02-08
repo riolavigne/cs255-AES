@@ -58,9 +58,33 @@ function appendIV(bits, iv) {
     return bits
 }
 
+function xorBits(a, b) {
+    // get min length
+    var l = Math.min(a.length, b.length);
+    var x = new Array;
+    // xor each word
+    for (var i = 0; i < l; i++) {
+	x = sjcl.bitArray.concat(x, [a[i] ^ b[i]]);
+    }
+    return x;
+}
+
 //str is a ... string
 //but! key is a bit array
 function encryptString(str, key) {
+    // need to do another xor test... blah
+    var a = new Array(2);
+    a[0] = 0;
+    a[1] = 1;
+    var b = new Array(3);
+    b[0] = 1;
+    b[1] = 0;
+    b[2] = 1;
+    var c = xorBits(a, b);
+    console.log("XOR TEST", a, b, c);
+    console.log("Lengths", sjcl.bitArray.bitLength(a), sjcl.bitArray.bitLength(b),
+		sjcl.bitArray.bitLength(c));
+
     // generate IV (3 * 32)
     var iv = GetRandomValues(3);
     console.log("iv", iv);
@@ -70,13 +94,25 @@ function encryptString(str, key) {
     console.log("counter", counter, sjcl.bitArray.bitLength(counter));
     // String to bits
     var bits = sjcl.codec.utf8String.toBits(str);
-    // XOR bits and IV+Ctr word by word...
+    var encrypted = new Array;
+    // XOR bits and IV+Ctr in 128-bit chuncks
+    for (var i = 0; i < bits.length; i+=4) {
+	// encrypt IV + Ctr
+	var nonce = sjcl.bitArray.concat(iv, counter);
+	console.log("nonce", nonce, sjcl.bitArray.bitLength(nonce));
+	// xor with bits
+	var curEnc = xorBits(bits.slice(i, i + 4), nonce); 
+	console.log("post curEnc", curEnc);
+	encrypted = encrypted.concat(curEnc);
+	// increment counter
+	counter[0]++;
+    }
+    console.log("curEnc", encrypted, "bits", bits);
     // append IV to end (push x2)
-    console.log("before bits", bits);
-    bits = appendIV(bits, iv);
-    console.log("bits", bits);
+    encrypted = appendIV(encrypted, iv);
     // make it base64 characters
-    var cipherText = sjcl.codec.base64.fromBits(bits);
+    var cipherText = sjcl.codec.base64.fromBits(encrypted);
+    console.log("try to get back...", sjcl.codec.base64.toBits(cipherText));
     // return
     return cipherText;
 }
@@ -92,17 +128,30 @@ function padSizeOf(num) {
 function getIV(bits) {
     var iv = new Array(ivLen);
     for (var i = ivLen - 1; i >= 0; i--) {
-	iv[ivLen - i - 1] = bits.pop();
+	iv[i] = bits.pop();
     }
     return iv;
 }
 
 // cphr and key are both bit arrays.
 function decryptBits(cipherText, key) {
+    console.log("Decrypting bits...");
     var bits = sjcl.codec.base64.toBits(cipherText);
     var iv = getIV(bits);
-    console.log("iv", iv);
-    var str = sjcl.codec.utf8String.fromBits(bits);
+    var counter = new Array(1);
+    counter[0] = 0;
+    var decrypted = new Array;
+    for (var i = 0; i < bits.length; i+=4) {
+	var nonce = sjcl.bitArray.concat(iv, counter);
+	console.log("dec nonce", nonce, sjcl.bitArray.bitLength(nonce));
+	var curDec = xorBits(bits.slice(i, i + 4), nonce); //bits.slice(i, i + 4);
+	console.log("pre curdec", curDec);
+	curDec = xorBits(bits.slice(i, i + 4), nonce);
+	console.log("post curdec", curDec);
+	decrypted = decrypted.concat(curDec);
+	counter[0]++;
+    }
+    var str = sjcl.codec.utf8String.fromBits(decrypted);
     return str;
 }
 

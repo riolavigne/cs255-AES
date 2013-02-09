@@ -44,27 +44,33 @@ function getMaster() {
 // @param {String} group Group name.
 // @return {String} Encryption of the plaintext, encoded as a string.
 function Encrypt(plainText, group) {
-    var salt = JSON.parse(cs255.localStorage.getItem('facebook-salt-' + my_username));
-    var key = sjcl.misc.pbkdf2(keys[group], salt, null, 128, null);
-    return encryptString(key, plainText);
+    if ((plainText.indexOf('AES:') == 0) || (plainText.length < 1)) {
+	    // already done, or blank
+	alert("Try entering a message (the button works only once)");
+	return plainText;
+    } else {
+	// encrypt, add tag.
+	var salt = JSON.parse(cs255.localStorage.getItem('facebook-salt-' + my_username));
+	var key = sjcl.misc.pbkdf2(keys[group], salt, null, 128, null);
+	return 'AES:' + encryptString(key, plainText);
+    }
 }
 
-function appendIV(bits, iv) {
-    for (var i = 0; i < iv.length; i++){
-	bits.push(iv[i]);
-    }
-    return bits
+function prependIV(bits, iv) {
+    return iv.concat(iv, bits);
 }
 
 function xorBits(a, b) {
     // get min length
     var l = Math.min(a.length, b.length);
+    var bl = Math.min(sjcl.bitArray.bitLength(a),
+		      sjcl.bitArray.bitLength(b));
     var x = new Array;
     // xor each word
     for (var i = 0; i < l; i++) {
 	x = sjcl.bitArray.concat(x, [a[i] ^ b[i]]);
     }
-    return x;
+    return sjcl.bitArray.bitSlice(x, 0, bl);
 }
 
 //here is the function Arun wrote for xoring two bit arrays.
@@ -98,38 +104,37 @@ function tryAgainXor(a,b) {
 
 function xorTest() {
     console.log("Simple test");
-    var a = sjcl.codec.utf8String.toBits('hello hello hello hello hello.');
-    var b = sjcl.codec.utf8String.toBits('hello hello hello hello hello.');
-    var c = tryAgainXor(a, b);
-    console.log("RESULT", a, b, c); 
+    getMaster();
+    console.log("MK", masterKey);
+    var a = sjcl.codec.utf8String.toBits('password verified');
+    var b = decryptString(masterKey, encryptString(masterKey, 'password verified'));
+    console.log("RESULT", a, b); 
 }
 
 //str is a ... string
 //but! key is a bit array
 function encryptString(key, str) {
+    console.log("ENCRYPTING");
     var iv = GetRandomValues(3);
-    var counter = new Array;
+    var counter = new Array(1);
     counter[0] = 0;
     var bits = sjcl.codec.utf8String.toBits(str);
+    console.log("unencrypted", bits);
     var encrypted = new Array;
     var cipher = new sjcl.cipher.aes(key);
     for (var i = 0; i < bits.length; i+=4) {
 	var nonce = sjcl.bitArray.concat(iv, counter);
-	// xor with bits
 	nonce = cipher.encrypt(nonce);
 	console.log("nonce", nonce);
-	console.log("before", bits.slice(i, i + 4));
-	var curEnc = tryAgainXor(bits.slice(i, i + 4), nonce); 
-	console.log("after", curEnc);
-	encrypted = encrypted.concat(curEnc);
-	// increment counter
+	var curEnc = xorBits(bits.slice(i, i + 4), nonce);
+	encrypted = sjcl.bitArray.concat(encrypted, curEnc);//encrypted.concat(curEnc);
 	counter[0]++;
     }
-    // append IV to end (push x2)
-    encrypted = appendIV(encrypted, iv);
-    // make it base64 characters
+    console.log("iv", iv);
+    console.log("encrypted", encrypted);
+    encrypted = prependIV(encrypted, iv);
+    console.log("encrypted with IV", encrypted);
     var cipherText = sjcl.codec.base64.fromBits(encrypted);
-    // return
     return cipherText;
 }
 
@@ -142,17 +147,20 @@ function padSizeOf(num) {
 }
 
 function getIV(bits) {
-    var iv = new Array(ivLen);
-    for (var i = ivLen - 1; i >= 0; i--) {
-	iv[i] = bits.pop();
-    }
+    var iv = bits.slice(0, ivLen);
     return iv;
 }
 
 // cphr and key are both bit arrays.
 function decryptString(key, cipherText) {
+    console.log("DECRYPTING");
     var bits = sjcl.codec.base64.toBits(cipherText);
+    console.log("undecrypted with IV", bits);
     var iv = getIV(bits);
+    // remove IV from bits
+    bits = bits.slice(6, bits.length);
+    console.log("iv", iv);
+    console.log("undecrypted", bits);
     var counter = new Array(1);
     counter[0] = 0;
     var decrypted = new Array;
@@ -160,12 +168,14 @@ function decryptString(key, cipherText) {
     for (var i = 0; i < bits.length; i+=4) {
 	var nonce = sjcl.bitArray.concat(iv, counter);
 	nonce = cipher.encrypt(nonce);
-	var curDec = tryAgainXor(bits.slice(i, i + 4), nonce);
-	decrypted = decrypted.concat(curDec);
+	console.log("nonce", nonce);
+	var curDec = xorBits(bits.slice(i, i + 4), nonce);
+	decrypted = sjcl.bitArray.concat(decrypted, curDec); //decrypted.concat(curDec);
 	counter[0]++;
     }
-    var str = sjcl.codec.utf8String.fromBits(decrypted);
-    return str;
+    console.log("decrypted", decrypted);
+    var plainText = sjcl.codec.utf8String.fromBits(decrypted);
+    return plainText;
 }
 
 
@@ -176,9 +186,15 @@ function decryptString(key, cipherText) {
 // @param {String} group Group name.
 // @return {String} Decryption of the ciphertext.
 function Decrypt(cipherText, group) {
-    var salt = JSON.parse(cs255.localStorage.getItem('facebook-salt-' + my_username));
-    var key = sjcl.misc.pbkdf2(keys[group], salt, null, 128, null);
-    return decryptString(key, cipherText);
+    if (cipherText.indexOf('AES:') == 0) {
+	// decrypt, ignore the tag.
+	var ct = cipherText.slice(4);
+	var salt = JSON.parse(cs255.localStorage.getItem('facebook-salt-' + my_username));
+	var key = sjcl.misc.pbkdf2(keys[group], salt, null, 128, null);
+	return decryptString(key, ct);
+    } else {
+	throw "not encrypted";
+    }
 }
 
 // Generate a new key for the given group.
@@ -238,6 +254,8 @@ function returnUser(verifier, salt) {
 		sjcl.codec.utf8String.toBits(verifier));
     if (decryptedVerifier == verifier) {
 	console.log("Successful login");
+	    sessionStorage.setItem('facebook-master-' + my_username,
+				   JSON.stringify(masterKey));
     } else {
 	console.log("Failure login");
     }
@@ -256,10 +274,6 @@ function newUser(verifier) {
     var encryptedVerifier = encryptString(masterKey, verifier);
     cs255.localStorage.setItem('facebook-verifier-' + my_username, encryptedVerifier);
     console.log("encrypted verifier", encryptedVerifier);
-    console.log("test...");
-    var dv = decryptString(masterKey, encryptedVerifier);
-    console.log("a, b", sjcl.codec.utf8String.toBits(verifier), 
-		sjcl.codec.utf8String.toBits(dv));
 }
 
 // should run when user not logged in
@@ -275,7 +289,7 @@ function LoginUser() {
     }
     var salt = cs255.localStorage.getItem("facebook-salt-" + my_username);
     
-    if (!salt) { // user has created password already
+    if (salt) { // user has created password already
 	returnUser(verified, salt);
     } else { // new user
 	newUser(verified);
@@ -1744,13 +1758,13 @@ sjcl.hash.sha256.prototype = {
 
 // This is the initialization
 //cs255.localStorage.clear();
-//xorTest();
 SetupUsernames();
 LoginUser();
 LoadKeys();
 AddElements();
 UpdateKeysTable();
 RegisterChangeEvents();
+//xorTest();
 
 console.log("CS255 script finished loading.");
 

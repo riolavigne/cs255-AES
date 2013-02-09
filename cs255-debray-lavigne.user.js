@@ -51,7 +51,7 @@ function Encrypt(plainText, group) {
     } else {
 	// encrypt, add tag.
 	var salt = [0,0,0,0];
-	var key = sjcl.misc.pbkdf2(keys[group], salt, null, 128, null);
+	var key = sjcl.codec.base64.toBits(keys[group]); //sjcl.misc.pbkdf2(keys[group], salt, null, 128, null);
 	return 'AES:' + encryptString(key, plainText);
     }
 }
@@ -151,7 +151,7 @@ function Decrypt(cipherText, group) {
 	// decrypt, ignore the tag.
 	var ct = cipherText.slice(4);
 	var salt = [0,0,0,0];
-	var key = sjcl.misc.pbkdf2(keys[group], salt, null, 128, null);
+	var key = sjcl.codec.base64.toBits(keys[group]); //sjcl.misc.pbkdf2(keys[group], salt, null, 128, null);
 	return decryptString(key, ct);
     } else {
 	throw "not encrypted";
@@ -163,11 +163,10 @@ function Decrypt(cipherText, group) {
 // @param {String} group Group name.
 // TODO: ensure support for base64 string keys...
 function GenerateKey(group) {
+    var entropy = GetRandomValues(4);
     var salt = GetRandomValues(4); // salt good for entropy
-    var key = sjcl.misc.pbkdf2(group, salt, null, 128, null);
-    var key64 = sjcl.codec.base64.fromBits(key); // first convert from base64
-    var keyStr = sjcl.codec.utf8String.fromBits(
-	sjcl.codec.utf8String.toBits(key64)); // need valid UTF-8 string for key
+    var key = sjcl.misc.pbkdf2(entropy, salt, null, 128, null);
+    var keyStr = sjcl.codec.base64.fromBits(key); // first base64 key
     keys[group] = keyStr;
     SaveKeys();
 }
@@ -181,7 +180,6 @@ function SaveKeys() {
     // grab the master key if necessary
     getMaster();
     var keyStr = JSON.stringify(keys);
-    console.log("Keys", keyStr);
     var key = generateNewKey(1);
     var encryptedKeys = encryptString(key, keyStr);
     cs255.localStorage.setItem('facebook-keys-' + my_username, encryptedKeys);
@@ -197,6 +195,12 @@ function LoadKeys() {
 	var keyStr = decryptString(key, encryptedKeys);
 	keys = JSON.parse(keyStr);
     }
+}
+
+function validateKey(key) {
+    console.log("validating key...", key);
+    // is key base64?
+    // is key correct length?
 }
 
 function generateNewKey(num) {
@@ -227,9 +231,7 @@ function returnUser(verifier, salt) {
     var password = prompt("Welcome back to Facebook encryption!" +
 		      "\nEnter your password: ");
     masterKey = sjcl.misc.pbkdf2(password, salt);
-    // TODO: verify verifier
     var encryptedVerifier = cs255.localStorage.getItem('facebook-verifier-' + my_username);
-    console.log("ev", encryptedVerifier);
     var decryptedVerifier = decryptVerifier(encryptedVerifier);
     if (decryptedVerifier == verifier) {
 	console.log("Successful login");
@@ -697,6 +699,7 @@ function AddKey() {
     return;
   }
   var k = document.getElementById('new-key-key').value;
+    validateKey(k);
   keys[g] = k;
   SaveKeys();
   UpdateKeysTable();

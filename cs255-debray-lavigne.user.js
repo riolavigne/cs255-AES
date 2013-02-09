@@ -51,7 +51,7 @@ function Encrypt(plainText, group) {
     } else {
 	// encrypt, add tag.
 	var salt = [0,0,0,0];
-	var key = sjcl.codec.base64.toBits(keys[group]); //sjcl.misc.pbkdf2(keys[group], salt, null, 128, null);
+	var key = sjcl.codec.base64.toBits(keys[group]);
 	return 'AES:' + encryptString(key, plainText);
     }
 }
@@ -151,7 +151,7 @@ function Decrypt(cipherText, group) {
 	// decrypt, ignore the tag.
 	var ct = cipherText.slice(4);
 	var salt = [0,0,0,0];
-	var key = sjcl.codec.base64.toBits(keys[group]); //sjcl.misc.pbkdf2(keys[group], salt, null, 128, null);
+	var key = sjcl.codec.base64.toBits(keys[group]);
 	return decryptString(key, ct);
     } else {
 	throw "not encrypted";
@@ -198,9 +198,20 @@ function LoadKeys() {
 }
 
 function validateKey(key) {
-    console.log("validating key...", key);
-    // is key base64?
+    var bits;
+    try {
+	bits = sjcl.codec.base64.toBits(key);
+    } catch (err) {
+	alert("Key is not base 64");
+	return false;
+    }
     // is key correct length?
+    var l = sjcl.bitArray.bitLength(bits);
+    if (l != 128) {
+	alert("Key is not the correct length.");
+	return false;
+    }
+    return true;
 }
 
 function generateNewKey(num) {
@@ -699,8 +710,10 @@ function AddKey() {
     return;
   }
   var k = document.getElementById('new-key-key').value;
-    validateKey(k);
+    var isValid = validateKey(k);
+    if (!isValid) return; // stop adding the key
   keys[g] = k;
+    console.log("key len", sjcl.bitArray.bitLength(k), k.length);
   SaveKeys();
   UpdateKeysTable();
 }

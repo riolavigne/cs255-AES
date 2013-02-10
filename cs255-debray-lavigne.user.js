@@ -73,6 +73,68 @@ function xorBits(a, b) {
     return sjcl.bitArray.bitSlice(x, 0, bl);
 }
 
+function padTest() {
+    var k = GetRandomValues(4);
+    var cipher = new sjcl.cipher.aes(k);
+    console.log("Simple padding test...");
+    // want to pad a partial bit array to 128
+    var a = [0];
+    a = sjcl.bitArray.concat(a, [sjcl.bitArray.partial(10, 1)]);
+    console.log("a", a, sjcl.bitArray.bitLength(a));
+    var b = padBits(a);
+    console.log("b", b, b.length, b.length * 32);
+    var c = cipher.encrypt(b);
+    console.log("c", c, c.length);
+    var d = cipher.decrypt(c);
+    console.log("d", d, d.length);
+    var e = removePad(d);
+    console.log("e", e, e.length);
+
+    console.log("Edge case padding test... multiple of 128");
+    // want to pad a bit array of len 128
+    a = [1, 2, 3, 4];
+    console.log("a", a, sjcl.bitArray.bitLength(a));
+    b = padBits(a);
+    console.log("b", b, sjcl.bitArray.bitLength(b));
+    //c = cipher.encrypt(b);
+    c = [];
+    for (var i = 0; i < b.length; i += 4) {
+	var x = cipher.encrypt(b.slice(i, i+4));
+	console.log("encrypting b...", x);
+	c = c.concat(x);
+    }
+    console.log("c", c, sjcl.bitArray.bitLength(c));
+    d = [];//cipher.decrypt(c);
+    for (var i = 0; i < c.length; i += 4) {
+	var x = cipher.decrypt(c.slice(i, i+4));
+	d = d.concat(x);
+    }
+    console.log("d", d, sjcl.bitArray.bitLength(d));
+    e = removePad(d);
+    console.log("e", e, sjcl.bitArray.bitLength(e));
+
+    console.log("Edge case padding test... []");
+    a = []
+    console.log("a", a, sjcl.bitArray.bitLength(a));
+    b = padBits(a);
+    console.log("b", b, sjcl.bitArray.bitLength(b));
+    c = [];
+    for (var i = 0; i < b.length; i += 4) {
+	var x = cipher.encrypt(b.slice(i, i+4));
+	console.log("encrypting b...", x);
+	c = c.concat(x);
+    }
+    console.log("c", c, sjcl.bitArray.bitLength(c));
+    d = [];
+    for (var i = 0; i < c.length; i += 4) {
+	var x = cipher.decrypt(c.slice(i, i+4));
+	d = d.concat(x);
+    }
+    console.log("d", d, sjcl.bitArray.bitLength(d));
+    e = removePad(d);
+    console.log("e", e, sjcl.bitArray.bitLength(e));
+}
+
 function xorTest() {
     console.log("Simple test");
     getMaster();
@@ -195,6 +257,34 @@ function LoadKeys() {
 	var keyStr = decryptString(key, encryptedKeys);
 	keys = JSON.parse(keyStr);
     }
+}
+
+function padBits(bits) {
+    var l = bits.length;
+    var bl = sjcl.bitArray.bitLength(bits);
+    // round it first...
+    var round = 32 - bl % 32;
+    var rounder = [sjcl.bitArray.partial(round, 0)]; // just stick a 0 on the end...
+    var rounded = sjcl.bitArray.concat(bits, rounder);
+    var toPad = 128/32 - l;
+    if (toPad == 0) toPad = 4;
+    var pad = [bl]; // save the bit length
+    for (var i = 1; i < toPad; i++) {
+	pad[i] = 0;
+    }
+    var padded = bits.concat(pad);
+    padded = sjcl.bitArray.clamp(padded, 128);
+    return bits.concat(pad);
+}
+
+function removePad(bits) {
+    var l = bits.length;
+    var bl;
+    for (var i = l - 1; i >= 0; i--) { // go from back to front
+	bl = bits[i];
+	if (bl > 0) break;
+    }
+    return sjcl.bitArray.clamp(bits, bl);
 }
 
 function validateKey(key) {
@@ -1759,6 +1849,7 @@ LoadKeys();
 AddElements();
 UpdateKeysTable();
 RegisterChangeEvents();
+//padTest();
 //xorTest();
 
 console.log("CS255 script finished loading.");

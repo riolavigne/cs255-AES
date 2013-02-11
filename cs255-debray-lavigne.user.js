@@ -57,7 +57,7 @@ function Encrypt(plainText, group) {
 }
 
 function prependIV(bits, iv) {
-    return iv.concat(iv, bits);
+    return sjcl.bitArray.concat(iv, bits);
 }
 
 function xorBits(a, b) {
@@ -70,7 +70,7 @@ function xorBits(a, b) {
     for (var i = 0; i < l; i++) {
 	x = sjcl.bitArray.concat(x, [a[i] ^ b[i]]);
     }
-    return sjcl.bitArray.bitSlice(x, 0, bl);
+    return sjcl.bitArray.clamp(x, bl);
 }
 
 function padTest() {
@@ -135,61 +135,88 @@ function padTest() {
     console.log("e", e, sjcl.bitArray.bitLength(e));
 }
 
-function xorTest() {
-    console.log("Simple test");
-    getMaster();
-    console.log("MK", masterKey);
-    var a = sjcl.codec.utf8String.toBits('password verified');
-    var b = decryptString(masterKey, encryptString(masterKey, 'password verified'));
-    console.log("RESULT", a, b); 
+function generateTag(bits, key1, key2) {
+    var iv = key1;
+    bits = padBits(bits);
+    for (var i = 0; i < bits.length; i += 4) {
+	var key = bits.slice(i, i + 4);
+	var cipher = new sjcl.cipher.aes(key);
+	iv = xorBits(iv, cipher.encrypt(iv));
+    }
+    return iv;
+}
+
+function verifyMac(bits, tag, key1, key2) {
+    var gen = generateTag(bits, key1, key2);
+    if (sjcl.bitArray.equal(gen, tag)) return true;
+    return false;
+}
+
+function mac(bits, key1, key2) {
+    var tag = generateTag(bits, key1, key2);
+    return tag.concat(bits);
+}
+
+function getTag(bits) {
+    return bits.slice(0, 4);
+}
+
+function removeTag(bits) {
+    // return the bit array without the tag on the end
+    return bits.slice(4);
 }
 
 //str is a ... string
 //but! key is a bit array
 function encryptString(key, str) {
-    console.log("ENCRYPTING");
+    // generate 3 separate keys: 1 for encrypting and 2 for MAC'ing
+    var key0 = generateNewKey(key, 0), key1 = generateNewKey(key, 1), 
+    key2 = generateNewKey(key, 2);
+    // generate a randome iv and set up a counter...
     var iv = GetRandomValues(3);
-    var counter = new Array(1);
-    counter[0] = 0;
+    var counter = 0;
     var bits = sjcl.codec.utf8String.toBits(str);
     var encrypted = new Array;
-    var cipher = new sjcl.cipher.aes(key);
+    var cipher = new sjcl.cipher.aes(key0);
     for (var i = 0; i < bits.length; i+=4) {
-	var nonce = sjcl.bitArray.concat(iv, counter);
+	var nonce = sjcl.bitArray.concat(iv, [counter]);
 	nonce = cipher.encrypt(nonce);
 	var curEnc = xorBits(bits.slice(i, i + 4), nonce);
-	encrypted = sjcl.bitArray.concat(encrypted, curEnc);//encrypted.concat(curEnc);
-	counter[0]++;
+	encrypted = sjcl.bitArray.concat(encrypted, curEnc);
+	counter++;
     }
+    // put the mac on before the iv (we don't want to mac the iv, right?
+    encrypted = mac(encrypted, key1, key2);
     encrypted = prependIV(encrypted, iv);
     var cipherText = sjcl.codec.base64.fromBits(encrypted);
     return cipherText;
 }
 
-// accepts a number of bits, returns the number that needs to be padded.
-// always padded to a miltiple of 128 and always at least 1 padding
-function padSizeOf(num) {
-    var mod = num % 128;
-    if (mod == 0) return 128;
-    return 128 - mod;
-}
-
 function getIV(bits) {
-    var iv = bits.slice(0, ivLen);
+    var iv = sjcl.bitArray.bitSlice(bits, 0, ivLen * 32); //bits.slice(0, ivLen);
     return iv;
 }
 
 // cphr and key are both bit arrays.
 function decryptString(key, cipherText) {
-    console.log("DECRYPTING");
+    var key0 = generateNewKey(key, 0),
+    key1 = generateNewKey(key, 1), // key1 and key2 are the MAC keys
+    key2 = generateNewKey(key, 2);
+
     var bits = sjcl.codec.base64.toBits(cipherText);
+    // remove iv
     var iv = getIV(bits);
-    // remove IV from bits
-    bits = bits.slice(6, bits.length);
-    var counter = new Array(1);
+    bits = bits.slice(ivLen);
+    // remove tag
+    var tag = getTag(bits);
+    bits = removeTag(bits);
+    if (!verifyMac(bits, tag, key1, key2)) {
+	throw "MAC failed"
+    }
+    var counter = new Array;
     counter[0] = 0;
     var decrypted = new Array;
-    var cipher = new sjcl.cipher.aes(key);
+    var cipher = new sjcl.cipher.aes(key0);
     for (var i = 0; i < bits.length; i+=4) {
 	var nonce = sjcl.bitArray.concat(iv, counter);
 	nonce = cipher.encrypt(nonce);
@@ -210,9 +237,8 @@ function decryptString(key, cipherText) {
 // @return {String} Decryption of the ciphertext.
 function Decrypt(cipherText, group) {
     if (cipherText.indexOf('AES:') == 0) {
-	// decrypt, ignore the tag.
+	// decrypt, ignore the 'AES'
 	var ct = cipherText.slice(4);
-	var salt = [0,0,0,0];
 	var key = sjcl.codec.base64.toBits(keys[group]);
 	return decryptString(key, ct);
     } else {
@@ -242,7 +268,7 @@ function SaveKeys() {
     // grab the master key if necessary
     getMaster();
     var keyStr = JSON.stringify(keys);
-    var key = generateNewKey(1);
+    var key = generateNewKey(masterKey, 1);
     var encryptedKeys = encryptString(key, keyStr);
     cs255.localStorage.setItem('facebook-keys-' + my_username, encryptedKeys);
 }
@@ -253,23 +279,42 @@ function LoadKeys() {
     keys = {}; // Reset the keys.
     var encryptedKeys = cs255.localStorage.getItem('facebook-keys-' + my_username);
     if (encryptedKeys) {
-	var key = generateNewKey(1);
+	var key = generateNewKey(masterKey, 1);
 	var keyStr = decryptString(key, encryptedKeys);
 	keys = JSON.parse(keyStr);
     }
 }
 
+function verifyTag(key1, key2, m, tag) {
+    return true;
+}
+
+function makeTag(key1, key2, m) {
+    return [0,0,0,0];
+}
+
+// initial pad.
+// rounds bitArray to nearest 32
+// then appends bitLength
+function padOnce(bits) {
+    var l = bits.length;
+    var bl = sjcl.bitArray.bitLength(bits);
+    var round = (32 - bl % 32) % 32;
+    if (round != 0) {
+	var rounder = [sjcl.bitArray.partial(round, 0)];
+	bits = sjcl.bitArray.concat(bits, rounder);
+    }
+    return sjcl.bitArray.concat(bits, [bl]);
+}
+
 function padBits(bits) {
     var l = bits.length;
     var bl = sjcl.bitArray.bitLength(bits);
-    // round it first...
-    var round = 32 - bl % 32;
-    var rounder = [sjcl.bitArray.partial(round, 0)]; // just stick a 0 on the end...
-    var rounded = sjcl.bitArray.concat(bits, rounder);
-    var toPad = 128/32 - l;
-    if (toPad == 0) toPad = 4;
-    var pad = [bl]; // save the bit length
-    for (var i = 1; i < toPad; i++) {
+    var bits = padOnce(bits);
+    var toPad = 4 - (l + 1) % 4;
+    if (toPad == -1) toPad = 3;
+    var pad = new Array
+    for (var i = 0; i < toPad; i++) {
 	pad[i] = 0;
     }
     var padded = bits.concat(pad);
@@ -304,19 +349,19 @@ function validateKey(key) {
     return true;
 }
 
-function generateNewKey(num) {
-    var cipher = new sjcl.cipher.aes(masterKey);
+function generateNewKey(key, num) {
+    var cipher = new sjcl.cipher.aes(key);
     var msg = [num, num, num, num];
     return cipher.encrypt(msg);
 }
 
 function encryptVerifier(verifier) {
-    var key = generateNewKey(0); // Use 0 for verifier
+    var key = generateNewKey(masterKey, 0); // Use 0 for verifier
     return encryptString(key, verifier);
 }
 
 function decryptVerifier(encryptedVerifier) {
-    var key = generateNewKey(0);
+    var key = generateNewKey(masterKey, 0);
     return decryptString(key, encryptedVerifier);
 }
 
@@ -1840,6 +1885,18 @@ sjcl.hash.sha256.prototype = {
   }
 };
 
+function padOnceTest() {
+    console.log("Pad Once Test...");
+    var a = new Array;
+    a[0] = 1;
+    a = sjcl.bitArray.concat(a, [sjcl.bitArray.partial(10, 0)]);
+    console.log("a", a, sjcl.bitArray.bitLength(a));
+    var b = padOnce(a);
+    console.log("b", b, sjcl.bitArray.bitLength(b));
+    var c = removePad(b);
+    console.log("c", c, sjcl.bitArray.bitLength(c));
+}
+
 
 // This is the initialization
 //cs255.localStorage.clear();
@@ -1849,8 +1906,8 @@ LoadKeys();
 AddElements();
 UpdateKeysTable();
 RegisterChangeEvents();
+//padOnceTest();
 //padTest();
-//xorTest();
 
 console.log("CS255 script finished loading.");
 

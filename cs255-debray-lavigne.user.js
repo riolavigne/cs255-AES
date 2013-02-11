@@ -135,6 +135,7 @@ function padTest() {
     console.log("e", e, sjcl.bitArray.bitLength(e));
 }
 
+// Uses NMAC
 function generateTag(bits, key1, key2) {
     var iv = key1;
     bits = padBits(bits);
@@ -143,6 +144,8 @@ function generateTag(bits, key1, key2) {
 	var cipher = new sjcl.cipher.aes(key);
 	iv = xorBits(iv, cipher.encrypt(iv));
     }
+    var lastCipher = new sjcl.cipher.aes(key2);
+    iv = lastCipher.encrypt(iv);
     return iv;
 }
 
@@ -185,9 +188,9 @@ function encryptString(key, str) {
 	encrypted = sjcl.bitArray.concat(encrypted, curEnc);
 	counter++;
     }
-    // put the mac on before the iv (we don't want to mac the iv, right?
-    encrypted = mac(encrypted, key1, key2);
+    // put the iv on first... MAC with the iv.
     encrypted = prependIV(encrypted, iv);
+    encrypted = mac(encrypted, key1, key2);
     var cipherText = sjcl.codec.base64.fromBits(encrypted);
     return cipherText;
 }
@@ -204,15 +207,15 @@ function decryptString(key, cipherText) {
     key2 = generateNewKey(key, 2);
 
     var bits = sjcl.codec.base64.toBits(cipherText);
-    // remove iv
-    var iv = getIV(bits);
-    bits = bits.slice(ivLen);
-    // remove tag
+    // remove tag first, then IV
     var tag = getTag(bits);
     bits = removeTag(bits);
     if (!verifyMac(bits, tag, key1, key2)) {
 	throw "MAC failed"
     }
+    // remove iv
+    var iv = getIV(bits);
+    bits = bits.slice(ivLen);
     var counter = new Array;
     counter[0] = 0;
     var decrypted = new Array;
@@ -249,12 +252,11 @@ function Decrypt(cipherText, group) {
 // Generate a new key for the given group.
 //
 // @param {String} group Group name.
-// TODO: ensure support for base64 string keys...
+// Generates key using the given GetRandomValues function
+// If GetRandomValues is secure, so is the key.
 function GenerateKey(group) {
-    var entropy = GetRandomValues(4);
-    var salt = GetRandomValues(4); // salt good for entropy
-    var key = sjcl.misc.pbkdf2(entropy, salt, null, 128, null);
-    var keyStr = sjcl.codec.base64.fromBits(key); // first base64 key
+    var key = GetRandomValues(4);
+    var keyStr = sjcl.codec.base64.fromBits(key);
     keys[group] = keyStr;
     SaveKeys();
 }
@@ -397,10 +399,8 @@ function newUser(verifier) {
     masterKey = sjcl.misc.pbkdf2(password, salt);
     sessionStorage.setItem("facebook-master-" + my_username,
 			   JSON.stringify(masterKey));
-    // TODO: encrypt verifier
     var encryptedVerifier = encryptVerifier(verifier);
     cs255.localStorage.setItem('facebook-verifier-' + my_username, encryptedVerifier);
-    console.log("encrypted verifier", encryptedVerifier);
 }
 
 // should run when user not logged in

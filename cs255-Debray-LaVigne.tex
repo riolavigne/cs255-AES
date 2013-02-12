@@ -1,18 +1,31 @@
-% The writeup to submit for the first milestone.
+% The writeup to submit for the second milestone.
 \documentclass{amsart}
 \input{macros}
 \begin{document}
-\title{Milestone 1 Writeup}
+\title{Milestone 2 Writeup}
 \author{Arun Debray and Rio LaVigne\\\today}
 \maketitle
-%your writeup should discuss all the design decisions you made for the bullet points from Section 2 and argue why the implementation of each bullet is secure.
-
-%we do expect a proof-like explanation of why your scheme is secure under the guidelines given by the assignment. A good write-up will include a detailed conceptual description of all encryption, decryption, storage, and generation operations and an argument explaining how an attacker that can break some part of your scheme can also break some underlying primitive that is believed to be secure.
-
 In this writeup, we will illustrate that each of the functions that we implemented is secure.
-%the aforementioned bullet points:
-%	The Encrypt() and Decrypt() functions
-\section{The \texttt{Encrypt()} and \texttt{Decrypt()} methods}%note that RCM is todo
+% Secure Login
+% password to generate a secure key
+\section{Secure Login}
+
+% generate new keys
+\section{The \texttt{GenerateKeys()} method}%todo
+This method calls \verb+sjcl.misc.pbkdf2()+ as a PRF, accepting a 128-bit random salt and the group name as arguments. The salt is generated with the provided function \verb+GetRandomValues()+, and is therefore truly random, and \verb+sjcl.misc.pbkdf2()+ is a secure PRF under the assumption that the salt is random, so this function is secure.
+
+% secure database for the keys
+% Securely storing
+% Securely loading
+\section{The \texttt{SaveKeys()} and \texttt{LoadKeys()} methods}%todo
+These methods rely on the same helper functions that \verb+Encrypt()+ and \verb+Decrypt()+ do; they implement the same AES-128 cipher in randomized counter mode. As discussed above, this is as secure as AES is. However, the differences are meaningful: in this case, the key is a master key generated from the password, rather than the shared group key.
+
+Thus, if Eve knows the group key for Bob's group $G$, she cannot gain any meaningful information about the rest of Bob's encrypted groups, since they have been encrypted in randomized counter mode; the additional obstacle of the nonce prevents Eve from gaining information about the master key.
+
+This also relies on the assumption that the master key is securely generated, which was shown in the previous section.%now things are out of order.
+
+% encryption and decryption
+\section{The \texttt{Encrypt()} and \texttt{Decrypt()} methods}%todo
 These methods implement an AES-128 block cipher operating in random counter mode. Specifically, if $K$ is the key for a given group, then $E(K,m)$ is given as follows:
 \begin{enumerate}
 \item First, the message is padded so that its length is a multiple of $128$; then, it is chopped into $128$-bit slices: $m = m[0]\conc m[1]\conc\dots\conc m[k]$ for some $k$.
@@ -20,16 +33,16 @@ These methods implement an AES-128 block cipher operating in random counter mode
 \item Then, the ciphertext is assembled from the blocks: $c = (\mathrm{IV} + i) \conc c[1] \conc c[2] \conc\dots\conc c[k]$.
 \end{enumerate}
 In this system, the key $K$ is used many times in a given group, but each key-nonce pair is used exactly once. Thus, this system is not vulnerable to many-time pad attacks; since the nonces are 32-bit integers, then the probability of a random collision is negligible. Thus, a successful attack on this system is equivalent to a successful attack on AES; as discussed in class, randomized counter mode is as secure as the PRP it is based upon. And since AES is believed to be secure, this system is secure.
-%	GenerateKeys()
-\section{The \texttt{GenerateKeys()} method}
-This method calls \verb+sjcl.misc.pbkdf2()+ as a PRF, accepting a 128-bit random salt and the group name as arguments. The salt is generated with the provided function \verb+GetRandomValues()+, and is therefore truly random, and \verb+sjcl.misc.pbkdf2()+ is a secure PRF under the assumption that the salt is random, so this function is secure.
-%	SaveKeys() and LoadKeys()
-\section{The \texttt{SaveKeys()} and \texttt{LoadKeys()} methods}
-These methods rely on the same helper functions that \verb+Encrypt()+ and \verb+Decrypt()+ do; they implement the same AES-128 cipher in randomized counter mode. As discussed above, this is as secure as AES is. However, the differences are meaningful: in this case, the key is a master key generated from the password, rather than the shared group key.
 
-Thus, if Eve knows the group key for Bob's group $G$, she cannot gain any meaningful information about the rest of Bob's encrypted groups, since they have been encrypted in randomized counter mode; the additional obstacle of the nonce prevents Eve from gaining information about the master key.
+% MAC
+% authenticate group messages
+% keys in the key store haven’t been changed
+\section{The MAC and message authentication}%todo
+Every message encrypted by this system is passed through a method that appends a MAC based on the ciphertext, in an encrypt-then-MAC protocol. The MAC used is called NMAC, which calculates the tag as follows:
+\[\operatorname{NMAC}(c) = E(K_2,E(c[n],E(c[n-1],E(\dots(c[1],E(c[0],K_1))\dots)))),\]
+where $E$ is the PRF used to implement AES as before and $K_1,K_2\in\cK$ are two keys generated from the secret key $K$ for the message by using AES as a PRF: $K_1 = E(K,0\conc 0\conc 0\conc 0)$ and $K_2 = E(K,1\conc 1\conc 1\conc 1)$. The ciphertext $c$ has already been padded so as to be a multiple of the block size, first by appending the size of the message, then adding zeros as necessary. Then, the sent ciphertext is $c^* = c\conc t$, the original ciphertext with the MAC attached.
 
-This also relies on the assumption that the master key is securely generated, which was shown in the previous section.
+When decrypting, the receiver can check the integrity of a ciphertext $c^* = c\conc t$ by removing the tag $t$ (since it is known to be of a given size) and computing $t' = \operatorname{NMAC}(c)$. If $t' = t$, then the message is validated; otherwise, an error is thrown. If the message is valid, then the padding is removed by removing all trailing zeros until the size of the message is found to yield the original ciphertext, which is then decrypted as above.
 \section{Other questions}
 %Your write-up should also discuss the following questions:
 % 1. What are some of the biggest issues with doing cryptography in the browser? Why might we want to do it anyhow?

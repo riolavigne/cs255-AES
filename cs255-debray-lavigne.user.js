@@ -32,26 +32,6 @@ var ivLen = 3; // number of 32-bit integers in an iv
 
 // encrypt/decrypt
 
-//E/D helpers
-
-// MAC
-
-// MAC Helpers
-
-// Login
-
-// Login Helpers
-
-// Other helpers
-
-function getMaster() {
-    if (masterKey) return;
-    masterKey = JSON.parse(sessionStorage.getItem("facebook-master-"+ my_username));
-}
-
-// Some initialization functions are called at the very end of this script.
-// You only have to edit the top portion.
-
 // Return the encryption of the message for the given group, in the form of a string.
 //
 // @param {String} plainText String to encrypt.
@@ -67,6 +47,189 @@ function Encrypt(plainText, group) {
 	var key = sjcl.codec.base64.toBits(keys[group]);
 	return 'AES:' + encryptString(key, plainText);
     }
+}
+
+// Return the decryption of the message for the given group, in the form of a string.
+// Throws an error in case the string is not properly encrypted.
+//
+// @param {String} cipherText String to decrypt.
+// @param {String} group Group name.
+// @return {String} Decryption of the ciphertext.
+function Decrypt(cipherText, group) {
+    if (cipherText.indexOf('AES:') == 0) {
+	// decrypt, ignore the 'AES'
+	var ct = cipherText.slice(4);
+	var key = sjcl.codec.base64.toBits(keys[group]);
+	return decryptString(key, ct);
+    } else {
+	throw "not encrypted";
+    }
+}
+
+//E/D helpers
+function encryptString(key, str) {
+    var bits = sjcl.codec.utf8String.toBits(str);
+    bits = encryptBits(key, bits);
+    var cipherText = sjcl.codec.base64.fromBits(bits);
+    return cipherText;
+}
+
+function encryptBits(key, bits) {
+    // generate 3 separate keys: 1 for encrypting and 2 for MAC'ing
+    var key0 = generateNewKey(key, 0), key1 = generateNewKey(key, 1), 
+    key2 = generateNewKey(key, 2);
+    var iv = generateIV();
+    var counter = 0;
+    var encrypted = new Array;
+    var cipher = new sjcl.cipher.aes(key0);
+    for (var i = 0; i < bits.length; i+=4) {
+	var nonce = sjcl.bitArray.concat(iv, [counter]);
+	nonce = cipher.encrypt(nonce);
+	var curEnc = xorBits(bits.slice(i, i + 4), nonce);
+	encrypted = sjcl.bitArray.concat(encrypted, curEnc);
+	counter++;
+    }
+    // put the iv on first... MAC with the iv.
+    encrypted = prependIV(encrypted, iv);
+    return mac(encrypted, key1, key2);
+}
+
+function decryptString(key, cipherText) {
+    var bits = sjcl.codec.base64.toBits(cipherText);
+    bits = decryptBits(key, bits);
+    var plainText = sjcl.codec.utf8String.fromBits(bits);
+    return plainText;
+}
+
+function decryptBits(key, bits) {
+    var key0 = generateNewKey(key, 0), key1 = generateNewKey(key, 1),
+    key2 = generateNewKey(key, 2);
+    var tag = getTag(bits);
+    bits = removeTag(bits);
+    if (!verifyMac(bits, tag, key1, key2)) {
+	throw "MAC failed"
+    }
+    var iv = getIV(bits);
+    bits = removeIV(bits);
+    var counter = 0;
+    var decrypted = new Array;
+    var cipher = new sjcl.cipher.aes(key0);
+    for (var i = 0; i < bits.length; i+=4) {
+	var nonce = sjcl.bitArray.concat(iv, [counter]);
+	nonce = cipher.encrypt(nonce);
+	var curDec = xorBits(bits.slice(i, i + 4), nonce);
+	decrypted = sjcl.bitArray.concat(decrypted, curDec);
+	counter++;
+    }
+    return decrypted;
+}
+
+function generateIV() {
+    return GetRandomValues(3);
+}
+
+function getIV(bits) {
+    var iv = sjcl.bitArray.bitSlice(bits, 0, ivLen * 32);
+    return iv.slice(0, ivLen);
+}
+
+function removeIV(bits) {
+    return bits.slice(ivLen);
+}
+
+function getTag(bits) {
+    return bits.slice(0, 4);
+}
+
+function removeTag(bits) {
+    return bits.slice(4);
+}
+
+// MAC
+function mac(bits, key1, key2) {
+    var tag = generateTag(bits, key1, key2);
+    return tag.concat(bits);
+}
+
+// MAC Helpers
+
+
+// Login
+// should run when user not logged in
+function LoginUser() {
+    // used to verify if user has entered the correct password
+    // TODO: make encrypt, not RAW
+    var verified = "password verified";
+
+    if (sessionStorage.getItem("facebook-user-" + my_username)) {
+	console.log("session still active.");
+	return;
+    }
+    var salt = cs255.localStorage.getItem("facebook-salt-" + my_username);
+    
+    if (salt) { // user has created password already
+	returnUser(verified, salt);
+    } else { // new user
+	newUser(verified);
+    }
+    
+    sessionStorage.setItem("facebook-user-" + my_username, true);
+}
+
+
+// Login Helpers
+function newUser(verifier) {
+    var password = prompt("Welcome to Facebook encryption!" +
+		      "\nEnter a password: ");
+    var salt = GetRandomValues(4);
+    cs255.localStorage.setItem("facebook-salt-" + my_username, JSON.stringify(salt));
+    
+    masterKey = sjcl.misc.pbkdf2(password, salt);
+    sessionStorage.setItem("facebook-master-" + my_username,
+			   JSON.stringify(masterKey));
+    var encryptedVerifier = encryptVerifier(verifier);
+    cs255.localStorage.setItem('facebook-verifier-' + my_username, encryptedVerifier);
+}
+
+function returnUser(verifier, salt) {
+    var salt = JSON.parse(salt);
+    var password = prompt("Welcome back to Facebook encryption!" +
+		      "\nEnter your password: ");
+    masterKey = sjcl.misc.pbkdf2(password, salt);
+    var encryptedVerifier = cs255.localStorage.getItem('facebook-verifier-' + my_username);
+    var decryptedVerifier;
+    try {
+	decryptedVerifier = decryptVerifier(encryptedVerifier);
+    } catch (err) {
+	alert("Login Failed");
+	throw "Login Failed";
+    }
+    if (decryptedVerifier == verifier) {
+	console.log("Successful login");
+	    sessionStorage.setItem('facebook-master-' + my_username,
+				   JSON.stringify(masterKey));
+    } else {
+	masterKey = null;
+	alert("Login Failed");
+	throw "Login Failed";
+    }
+}
+
+function encryptVerifier(verifier) {
+    var key = generateNewKey(masterKey, 0); // Use 0 for verifier
+    return encryptString(key, verifier);
+}
+
+function decryptVerifier(encryptedVerifier) {
+    var key = generateNewKey(masterKey, 0);
+    return decryptString(key, encryptedVerifier);
+}
+
+// Other helpers
+
+function getMaster() {
+    if (masterKey) return;
+    masterKey = JSON.parse(sessionStorage.getItem("facebook-master-"+ my_username));
 }
 
 function prependIV(bits, iv) {
@@ -106,106 +269,8 @@ function verifyMac(bits, tag, key1, key2) {
     return false;
 }
 
-function mac(bits, key1, key2) {
-    var tag = generateTag(bits, key1, key2);
-    return tag.concat(bits);
-}
-
-function getTag(bits) {
-    return bits.slice(0, 4);
-}
-
-function removeTag(bits) {
-    return bits.slice(4);
-}
-
-function generateIV() {
-    return GetRandomValues(3);
-}
-
-function encryptString(key, str) {
-    var bits = sjcl.codec.utf8String.toBits(str);
-    bits = encryptBits(key, bits);
-    var cipherText = sjcl.codec.base64.fromBits(bits);
-    return cipherText;
-}
-
-function encryptBits(key, bits) {
-    // generate 3 separate keys: 1 for encrypting and 2 for MAC'ing
-    var key0 = generateNewKey(key, 0), key1 = generateNewKey(key, 1), 
-    key2 = generateNewKey(key, 2);
-    var iv = generateIV();
-    var counter = 0;
-    var encrypted = new Array;
-    var cipher = new sjcl.cipher.aes(key0);
-    for (var i = 0; i < bits.length; i+=4) {
-	var nonce = sjcl.bitArray.concat(iv, [counter]);
-	nonce = cipher.encrypt(nonce);
-	var curEnc = xorBits(bits.slice(i, i + 4), nonce);
-	encrypted = sjcl.bitArray.concat(encrypted, curEnc);
-	counter++;
-    }
-    // put the iv on first... MAC with the iv.
-    encrypted = prependIV(encrypted, iv);
-    return mac(encrypted, key1, key2);
-}
-
-function getIV(bits) {
-    var iv = sjcl.bitArray.bitSlice(bits, 0, ivLen * 32);
-    return iv.slice(0, ivLen);
-}
-
-function removeIV(bits) {
-    return bits.slice(ivLen);
-}
-
-function decryptString(key, cipherText) {
-    var bits = sjcl.codec.base64.toBits(cipherText);
-    bits = decryptBits(key, bits);
-    var plainText = sjcl.codec.utf8String.fromBits(bits);
-    return plainText;
-}
-
-function decryptBits(key, bits) {
-    var key0 = generateNewKey(key, 0), key1 = generateNewKey(key, 1),
-    key2 = generateNewKey(key, 2);
-    var tag = getTag(bits);
-    bits = removeTag(bits);
-    if (!verifyMac(bits, tag, key1, key2)) {
-	throw "MAC failed"
-    }
-    var iv = getIV(bits);
-    bits = removeIV(bits);
-    var counter = 0;
-    var decrypted = new Array;
-    var cipher = new sjcl.cipher.aes(key0);
-    for (var i = 0; i < bits.length; i+=4) {
-	var nonce = sjcl.bitArray.concat(iv, [counter]);
-	nonce = cipher.encrypt(nonce);
-	var curDec = xorBits(bits.slice(i, i + 4), nonce);
-	decrypted = sjcl.bitArray.concat(decrypted, curDec);
-	counter++;
-    }
-    return decrypted;
-}
 
 
-// Return the decryption of the message for the given group, in the form of a string.
-// Throws an error in case the string is not properly encrypted.
-//
-// @param {String} cipherText String to decrypt.
-// @param {String} group Group name.
-// @return {String} Decryption of the ciphertext.
-function Decrypt(cipherText, group) {
-    if (cipherText.indexOf('AES:') == 0) {
-	// decrypt, ignore the 'AES'
-	var ct = cipherText.slice(4);
-	var key = sjcl.codec.base64.toBits(keys[group]);
-	return decryptString(key, ct);
-    } else {
-	throw "not encrypted";
-    }
-}
 
 // Generate a new key for the given group.
 //
@@ -315,15 +380,7 @@ function generateNewKey(key, num) {
     return cipher.encrypt(msg);
 }
 
-function encryptVerifier(verifier) {
-    var key = generateNewKey(masterKey, 0); // Use 0 for verifier
-    return encryptString(key, verifier);
-}
 
-function decryptVerifier(encryptedVerifier) {
-    var key = generateNewKey(masterKey, 0);
-    return decryptString(key, encryptedVerifier);
-}
 
 //generate master key from password and salt
 //the former is a string, the latter a bit array
@@ -332,57 +389,9 @@ function recreate_master_key(password,salt) {
     return sjcl.misc.pbkdf2(password, salt, null, 128, null);
 }
 
-function returnUser(verifier, salt) {
-    var salt = JSON.parse(salt);
-    var password = prompt("Welcome back to Facebook encryption!" +
-		      "\nEnter your password: ");
-    masterKey = sjcl.misc.pbkdf2(password, salt);
-    var encryptedVerifier = cs255.localStorage.getItem('facebook-verifier-' + my_username);
-    var decryptedVerifier = decryptVerifier(encryptedVerifier);
-    if (decryptedVerifier == verifier) {
-	console.log("Successful login");
-	    sessionStorage.setItem('facebook-master-' + my_username,
-				   JSON.stringify(masterKey));
-    } else {
-	console.log("Failure login");
-    }
-}
 
-function newUser(verifier) {
-    var password = prompt("Welcome to Facebook encryption!" +
-		      "\nEnter a password: ");
-    var salt = GetRandomValues(4);
-    cs255.localStorage.setItem("facebook-salt-" + my_username, JSON.stringify(salt));
-    
-    masterKey = sjcl.misc.pbkdf2(password, salt);
-    sessionStorage.setItem("facebook-master-" + my_username,
-			   JSON.stringify(masterKey));
-    var encryptedVerifier = encryptVerifier(verifier);
-    cs255.localStorage.setItem('facebook-verifier-' + my_username, encryptedVerifier);
-}
 
-// should run when user not logged in
-// TODO: Fix verifier... does not work..
-function LoginUser() {
-    // used to verify if user has entered the correct password
-    // TODO: make encrypt, not RAW
-    var verified = "password verified";
 
-    if (sessionStorage.getItem("facebook-user-" + my_username)) {
-	console.log("session still active.");
-	return;
-    }
-    var salt = cs255.localStorage.getItem("facebook-salt-" + my_username);
-    
-    if (salt) { // user has created password already
-	returnUser(verified, salt);
-    } else { // new user
-	newUser(verified);
-    }
-    
-    // FOR DEBUGGING
-    sessionStorage.setItem("facebook-user-" + my_username, true);
-}
 
 /////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////
@@ -1843,6 +1852,7 @@ sjcl.hash.sha256.prototype = {
 };
 
 // This is the initialization
+//cs255.localStorage.clear();
 SetupUsernames();
 LoginUser();
 LoadKeys();

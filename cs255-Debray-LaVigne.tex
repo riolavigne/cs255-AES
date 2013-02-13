@@ -18,7 +18,7 @@ To show that logging in is secure, it will be necessary to demonstrate that the 
 %and that they can't get the verifier otherwise...
 % generate new keys
 \section{The \texttt{GenerateKeys()} method}%todo
-This method calls \verb+sjcl.misc.pbkdf2()+ as a PRF, accepting a 128-bit random salt and the group name as arguments. The salt is generated with the provided function \verb+GetRandomValues()+, and is therefore truly random, and \verb+sjcl.misc.pbkdf2()+ is a secure PRF under the assumption that the salt is random, so this function is secure.
+This method uses \verb+GetRandomValues()+ to generate 128-bit pseudorandom keys. Assuming \verb+GetRandomValues()+ is a secure PRG, we have that \texttt{GenerateKeys()} generates secure pseudorandom keys.
 
 % secure database for the keys
 % Securely storing

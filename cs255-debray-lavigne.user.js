@@ -38,15 +38,15 @@ var ivLen = 3; // number of 32-bit integers in an iv
 // @param {String} group Group name.
 // @return {String} Encryption of the plaintext, encoded as a string.
 function Encrypt(plainText, group) {
-    if ((plainText.indexOf('AES:') == 0) || (plainText.length < 1)) {
-	    // already done, or blank
-	alert("Try entering a message (the button works only once)");
-	return plainText;
-    } else {
-	// encrypt, add tag.
-	var key = sjcl.codec.base64.toBits(keys[group]);
-	return 'AES:' + encryptString(key, plainText);
-    }
+	if ((plainText.indexOf('AES:') == 0) || (plainText.length < 1)) {
+		// already done, or blank
+		alert("Try entering a message (the button works only once)");
+		return plainText;
+	} else {
+		// encrypt, add tag.
+		var key = sjcl.codec.base64.toBits(keys[group]);
+		return 'AES:' + encryptString(key, plainText);
+	}
 }
 
 // Return the decryption of the message for the given group, in the form of a string.
@@ -56,221 +56,278 @@ function Encrypt(plainText, group) {
 // @param {String} group Group name.
 // @return {String} Decryption of the ciphertext.
 function Decrypt(cipherText, group) {
-    if (cipherText.indexOf('AES:') == 0) {
-	// decrypt, ignore the 'AES'
-	var ct = cipherText.slice(4);
-	var key = sjcl.codec.base64.toBits(keys[group]);
-	return decryptString(key, ct);
-    } else {
-	throw "not encrypted";
-    }
+	if (cipherText.indexOf('AES:') == 0) {
+		// decrypt, ignore the 'AES'
+		var ct = cipherText.slice(4);
+		var key = sjcl.codec.base64.toBits(keys[group]);
+		return decryptString(key, ct);
+	} else {
+		throw "not encrypted";
+	}
 }
 
 //E/D helpers
+
+/* Runs AES encryption on the given string str, using the variable key
+   as the secret key.
+   The ciphertext is returned as a string.
+   This function is basically a wrapper function for encryptBits.
+ */
 function encryptString(key, str) {
-    var bits = sjcl.codec.utf8String.toBits(str);
-    bits = encryptBits(key, bits);
-    var cipherText = sjcl.codec.base64.fromBits(bits);
-    return cipherText;
+	var bits = sjcl.codec.utf8String.toBits(str);
+	bits = encryptBits(key, bits);
+	var cipherText = sjcl.codec.base64.fromBits(bits);
+	return cipherText;
 }
 
+/* Runs AES encryption on the given bit array bits, using for the secret
+   key the variable key.
+   This function returns a bit array.
+   In addition to the encryption, this method calculates the MAC
+   and attaches it to the encrypted bit array.
+ */
 function encryptBits(key, bits) {
-    // generate 3 separate keys: 1 for encrypting and 2 for MAC'ing
-    var key0 = generateNewKey(key, 0), key1 = generateNewKey(key, 1), 
-    key2 = generateNewKey(key, 2);
-    var iv = generateIV();
-    var counter = 0;
-    var encrypted = new Array;
-    var cipher = new sjcl.cipher.aes(key0);
-    for (var i = 0; i < bits.length; i+=4) {
-	var nonce = sjcl.bitArray.concat(iv, [counter]);
-	nonce = cipher.encrypt(nonce);
-	var curEnc = xorBits(bits.slice(i, i + 4), nonce);
-	encrypted = sjcl.bitArray.concat(encrypted, curEnc);
-	counter++;
-    }
-    // put the iv on first... MAC with the iv.
-    encrypted = prependIV(encrypted, iv);
-    return mac(encrypted, key1, key2);
+	// generate 3 separate keys: 1 for encrypting and 2 for MAC'ing
+	var key0 = generateNewKey(key, 0), key1 = generateNewKey(key, 1), 
+	key2 = generateNewKey(key, 2);
+	var iv = generateIV();
+	var counter = 0;
+	var encrypted = new Array;
+	var cipher = new sjcl.cipher.aes(key0);
+	for (var i = 0; i < bits.length; i+=4) {
+		var nonce = sjcl.bitArray.concat(iv, [counter]);
+		nonce = cipher.encrypt(nonce);
+		var curEnc = xorBits(bits.slice(i, i + 4), nonce);
+		encrypted = sjcl.bitArray.concat(encrypted, curEnc);
+		counter++;
+	}
+	// put the iv on first... MAC with the iv.
+	encrypted = prependIV(encrypted, iv);
+	return mac(encrypted, key1, key2);
 }
 
+/* Similarly to encryptString above, this function
+   takes a ciphertext string (the variable cipherText)
+   and a key for AES decryption and returns the corres-
+   ponding plaintext. This is a wrapper for decryptBits.
+ */
 function decryptString(key, cipherText) {
-    var bits = sjcl.codec.base64.toBits(cipherText);
-    bits = decryptBits(key, bits);
-    var plainText = sjcl.codec.utf8String.fromBits(bits);
-    return plainText;
+	var bits = sjcl.codec.base64.toBits(cipherText);
+	bits = decryptBits(key, bits);
+	var plainText = sjcl.codec.utf8String.fromBits(bits);
+	return plainText;
 }
 
+/* Implements AES decryption for bit arrays.
+	The arguments are, respectively, the secret key and
+	the encrypted bit array, and the function returns the
+	corresponding plaintext as a bit array.
+	Since the encrypted array also comes with a MAC attached,
+	this method verifies that the message was transmitted with-
+	out error by comparing the MAC of the received message with
+	the tag.
+ */
 function decryptBits(key, bits) {
-    var key0 = generateNewKey(key, 0), key1 = generateNewKey(key, 1),
-    key2 = generateNewKey(key, 2);
-    var tag = getTag(bits);
-    bits = removeTag(bits);
-    if (!verifyMac(bits, tag, key1, key2)) {
-	throw "MAC failed"
-    }
-    var iv = getIV(bits);
-    bits = removeIV(bits);
-    var counter = 0;
-    var decrypted = new Array;
-    var cipher = new sjcl.cipher.aes(key0);
-    for (var i = 0; i < bits.length; i+=4) {
-	var nonce = sjcl.bitArray.concat(iv, [counter]);
-	nonce = cipher.encrypt(nonce);
-	var curDec = xorBits(bits.slice(i, i + 4), nonce);
-	decrypted = sjcl.bitArray.concat(decrypted, curDec);
-	counter++;
-    }
-    return decrypted;
+	var key0 = generateNewKey(key, 0), key1 = generateNewKey(key, 1),
+	key2 = generateNewKey(key, 2);
+	var tag = getTag(bits);
+	bits = removeTag(bits);
+	if (!verifyMac(bits, tag, key1, key2)) {
+		throw "MAC failed";
+	}
+	var iv = getIV(bits);
+	bits = removeIV(bits);
+	var counter = 0;
+	var decrypted = new Array;
+	var cipher = new sjcl.cipher.aes(key0);
+	for (var i = 0; i < bits.length; i+=4) {
+		var nonce = sjcl.bitArray.concat(iv, [counter]);
+		nonce = cipher.encrypt(nonce);
+		var curDec = xorBits(bits.slice(i, i + 4), nonce);
+		decrypted = sjcl.bitArray.concat(decrypted, curDec);
+		counter++;
+	}
+	return decrypted;
 }
 
+//Generates an initial value for encryption in encryptBits.
 function generateIV() {
-    return GetRandomValues(3);
+	return GetRandomValues(3);
 }
 
+//Given an encrypted bit array, returns the IV tucked in it.
 function getIV(bits) {
-    var iv = sjcl.bitArray.bitSlice(bits, 0, ivLen * 32);
-    return iv.slice(0, ivLen);
+	var iv = sjcl.bitArray.bitSlice(bits, 0, ivLen * 32);
+	return iv.slice(0, ivLen);
 }
 
+/* Given an encrypted bit array, removes the IV, so that the rest of
+   message can be processed.
+ */
 function removeIV(bits) {
-    return bits.slice(ivLen);
+	return bits.slice(ivLen);
 }
 
+//Returns the tag corresponding to the MAC of an encrypted bit array.
 function getTag(bits) {
-    return bits.slice(0, 4);
+	return bits.slice(0, 4);
 }
 
+//Removes the MAC tag from an encrypted bit array, returning the ciphertext.
 function removeTag(bits) {
-    return bits.slice(4);
+	return bits.slice(4);
 }
 
-// MAC
+/* Takes a bit array and the two keys used for MACing and a
+   calculates the MAC for the message and appends it as a tag
+   to the bit array.
+	This is a wrapper function for generateTag.
+ */
 function mac(bits, key1, key2) {
-    var tag = generateTag(bits, key1, key2);
-    return tag.concat(bits);
+	var tag = generateTag(bits, key1, key2);
+	return tag.concat(bits);
 }
 
-// MAC Helpers
+// Login functions and helpers
 
-
-// Login
-// should run when user not logged in
+/* This function runs when the user logs in. It determines whether
+   the user has logged in before by checking whether a salt exists
+   in the local storage, and calls newUser or returnUser accordingly.
+ */
 function LoginUser() {
-    // used to verify if user has entered the correct password
-    // TODO: make encrypt, not RAW
-    var verified = "password verified";
+	// used to verify if user has entered the correct password
+	// TODO: make encrypt, not RAW
+	var verified = "password verified";
 
-    if (sessionStorage.getItem("facebook-user-" + my_username)) {
-	console.log("session still active.");
-	return;
-    }
-    var salt = cs255.localStorage.getItem("facebook-salt-" + my_username);
-    
-    if (salt) { // user has created password already
-	returnUser(verified, salt);
-    } else { // new user
-	newUser(verified);
-    }
-    
-    sessionStorage.setItem("facebook-user-" + my_username, true);
+	if (sessionStorage.getItem("facebook-user-" + my_username)) {
+		console.log("session still active.");
+		return;
+	}
+	var salt = cs255.localStorage.getItem("facebook-salt-" + my_username);
+	
+	if (salt) { // user has created password already
+		returnUser(verified, salt);
+	} else { // new user
+		newUser(verified);
+	}	
+	sessionStorage.setItem("facebook-user-" + my_username, true);
 }
-
 
 // Login Helpers
+
+/* If the user hasn't used encryption before, this function prompts them
+   to create a password. This is used to create a master key (stored to
+   session storage) and a salt (stored to local storage) which is used to
+   encrypt the group keys later on. Additionally, a verifier is created and
+   stored in order to allow secure login later.
+ */
 function newUser(verifier) {
-    var password = prompt("Welcome to Facebook encryption!" +
-		      "\nEnter a password: ");
-    var salt = GetRandomValues(4);
-    cs255.localStorage.setItem("facebook-salt-" + my_username, JSON.stringify(salt));
-    
-    masterKey = sjcl.misc.pbkdf2(password, salt);
-    sessionStorage.setItem("facebook-master-" + my_username,
-			   JSON.stringify(masterKey));
-    var encryptedVerifier = encryptVerifier(verifier);
-    cs255.localStorage.setItem('facebook-verifier-' + my_username, encryptedVerifier);
+	var password = prompt("Welcome to Facebook encryption!" + "\nEnter a password: ");
+	var salt = GetRandomValues(4);
+	cs255.localStorage.setItem("facebook-salt-" + my_username, JSON.stringify(salt));
+	
+	masterKey = sjcl.misc.pbkdf2(password, salt);
+	sessionStorage.setItem("facebook-master-" + my_username, JSON.stringify(masterKey));
+	var encryptedVerifier = encryptVerifier(verifier);
+	cs255.localStorage.setItem('facebook-verifier-' + my_username, encryptedVerifier);
 }
 
+/* If the user already has a password, this function computes whether the user has
+   reentered their password correctly. This is done by computing a verifier and com-
+   paring it to the verifier created upon first login.
+ */
 function returnUser(verifier, salt) {
-    var salt = JSON.parse(salt);
-    var password = prompt("Welcome back to Facebook encryption!" +
-		      "\nEnter your password: ");
-    masterKey = sjcl.misc.pbkdf2(password, salt);
-    var encryptedVerifier = cs255.localStorage.getItem('facebook-verifier-' + my_username);
-    var decryptedVerifier;
-    try {
-	decryptedVerifier = decryptVerifier(encryptedVerifier);
-    } catch (err) {
-	alert("Login Failed");
-	throw "Login Failed";
-    }
-    if (decryptedVerifier == verifier) {
-	console.log("Successful login");
-	    sessionStorage.setItem('facebook-master-' + my_username,
-				   JSON.stringify(masterKey));
-    } else {
-	masterKey = null;
-	alert("Login Failed");
-	throw "Login Failed";
-    }
+	var salt = JSON.parse(salt);
+	var password = prompt("Welcome back to Facebook encryption!" + "\nEnter your password: ");
+	masterKey = sjcl.misc.pbkdf2(password, salt);
+	var encryptedVerifier = cs255.localStorage.getItem('facebook-verifier-' + my_username);
+	var decryptedVerifier;
+	try {
+		decryptedVerifier = decryptVerifier(encryptedVerifier);
+	} catch (err) {
+		alert("Login Failed");
+		throw "Login Failed";
+	}
+	if (decryptedVerifier == verifier) {
+		console.log("Successful login");
+		sessionStorage.setItem('facebook-master-' + my_username, JSON.stringify(masterKey));
+	} else {
+		masterKey = null;
+		alert("Login Failed");
+		throw "Login Failed";
+	}
 }
 
+/* These functions encrypt and decrypt the verifier. It is stored encrypted,
+   since it wouldn't be secure otherwise, so these functions are used to go
+   between the stored, encrypted string, and the plaintext one used for
+   calculations.
+ */
 function encryptVerifier(verifier) {
-    var key = generateNewKey(masterKey, 0); // Use 0 for verifier
-    return encryptString(key, verifier);
+	var key = generateNewKey(masterKey, 0); // Use 0 for verifier
+	return encryptString(key, verifier);
 }
 
 function decryptVerifier(encryptedVerifier) {
-    var key = generateNewKey(masterKey, 0);
-    return decryptString(key, encryptedVerifier);
+	var key = generateNewKey(masterKey, 0);
+	return decryptString(key, encryptedVerifier);
 }
 
 // Other helpers
 
+//This function retrieves the master key from session storage.
 function getMaster() {
-    if (masterKey) return;
-    masterKey = JSON.parse(sessionStorage.getItem("facebook-master-"+ my_username));
+	if (masterKey) return;
+	masterKey = JSON.parse(sessionStorage.getItem("facebook-master-"+ my_username));
 }
 
+//Adds the IV onto an encrypted bit array.
 function prependIV(bits, iv) {
-    return sjcl.bitArray.concat(iv, bits);
+	return sjcl.bitArray.concat(iv, bits);
 }
 
+//xors two bit arrays.
 function xorBits(a, b) {
-    // get min length
-    var l = Math.min(a.length, b.length);
-    var bl = Math.min(sjcl.bitArray.bitLength(a),
-		      sjcl.bitArray.bitLength(b));
-    var x = new Array;
-    // xor each word
-    for (var i = 0; i < l; i++) {
-	x = sjcl.bitArray.concat(x, [a[i] ^ b[i]]);
-    }
-    return sjcl.bitArray.clamp(x, bl);
+	// get min length
+	var l = Math.min(a.length, b.length);
+	var bl = Math.min(sjcl.bitArray.bitLength(a), sjcl.bitArray.bitLength(b));
+	var x = new Array;
+	// xor each word
+	for (var i = 0; i < l; i++) {
+		x = sjcl.bitArray.concat(x, [a[i] ^ b[i]]);
+	}
+	return sjcl.bitArray.clamp(x, bl);
 }
 
-// Uses NMAC
+// Uses NMAC to generate a MAC for a given message.
 function generateTag(bits, key1, key2) {
-    var iv = key1;
-    bits = padBits(bits);
-    for (var i = 0; i < bits.length; i += 4) {
-	var key = bits.slice(i, i + 4);
-	var cipher = new sjcl.cipher.aes(key);
-	iv = xorBits(iv, cipher.encrypt(iv));
-    }
-    var lastCipher = new sjcl.cipher.aes(key2);
-    iv = lastCipher.encrypt(iv);
-    return iv;
+	var iv = key1;
+	bits = padBits(bits);
+	for (var i = 0; i < bits.length; i += 4) {
+		var key = bits.slice(i, i + 4);
+		var cipher = new sjcl.cipher.aes(key);
+		iv = xorBits(iv, cipher.encrypt(iv));
+	}
+	var lastCipher = new sjcl.cipher.aes(key2);
+	iv = lastCipher.encrypt(iv);
+	return iv;
 }
 
+/* For a given tag and a received message, this
+   function computes the MAC that should have been
+   sent, compares it to the MAC received, and indicates
+   whether the two are equal (and therefore whether the
+   message integrity has been preserved).
+
+   The sjcl.bitArray.equal function is a way to prevent timing
+   attacks, since it takes the same amount of time for any
+   test.
+ */
 function verifyMac(bits, tag, key1, key2) {
-    var gen = generateTag(bits, key1, key2);
-    if (sjcl.bitArray.equal(gen, tag)) return true;
-    return false;
+	var gen = generateTag(bits, key1, key2);
+	if (sjcl.bitArray.equal(gen, tag)) return true;
+	return false;
 }
-
-
-
 
 // Generate a new key for the given group.
 //
@@ -278,120 +335,114 @@ function verifyMac(bits, tag, key1, key2) {
 // Generates key using the given GetRandomValues function
 // If GetRandomValues is secure, so is the key.
 function GenerateKey(group) {
-    var key = GetRandomValues(4);
-    var keyStr = sjcl.codec.base64.fromBits(key);
-    keys[group] = keyStr;
-    SaveKeys();
+	var key = GetRandomValues(4);
+	var keyStr = sjcl.codec.base64.fromBits(key);
+	keys[group] = keyStr;
+	SaveKeys();
 }
 
-// Take the current group keys, and save them to disk.
+// Take the current group keys, encrypt them, and save them to disk.
+// As with all encryption, a MAC tag is appended to the saved keys.
 
 //this depends on:
 //  master_key
 //  the fact that everything's a bit array
 function SaveKeys() {
-    // grab the master key if necessary
-    getMaster();
-    var keyStr = JSON.stringify(keys);
-    var key = generateNewKey(masterKey, 1);
-    var encryptedKeys = encryptString(key, keyStr);
-    cs255.localStorage.setItem('facebook-keys-' + my_username, encryptedKeys);
-}
-
-// Load the group keys from disk.
-function LoadKeys() {
-    getMaster();
-    keys = {}; // Reset the keys.
-    var encryptedKeys = cs255.localStorage.getItem('facebook-keys-' + my_username);
-    if (encryptedKeys) {
+	// grab the master key if necessary
+	getMaster();
+	var keyStr = JSON.stringify(keys);
 	var key = generateNewKey(masterKey, 1);
-	var keyStr = decryptString(key, encryptedKeys);
-	keys = JSON.parse(keyStr);
-    }
+	var encryptedKeys = encryptString(key, keyStr);
+	cs255.localStorage.setItem('facebook-keys-' + my_username, encryptedKeys);
 }
 
-function verifyTag(key1, key2, m, tag) {
-    return true;
+// Load the group keys from disk and decrypt them.
+// The MAC is used to determine whether they keys have been corrupted.
+function LoadKeys() {
+	getMaster();
+	keys = {}; // Reset the keys.
+	var encryptedKeys = cs255.localStorage.getItem('facebook-keys-' + my_username);
+	if (encryptedKeys) {
+		var key = generateNewKey(masterKey, 1);
+		var keyStr = decryptString(key, encryptedKeys);
+		keys = JSON.parse(keyStr);
+	}
 }
 
-function makeTag(key1, key2, m) {
-    return [0,0,0,0];
+function validateKey(key) {
+	var bits;
+	try {
+		bits = sjcl.codec.base64.toBits(key);
+	} catch (err) {
+		alert("Key is not base 64");
+		return false;
+	}
+	// is key correct length?
+	var l = sjcl.bitArray.bitLength(bits);
+	if (l != 128) {
+		alert("Key is not the correct length.");
+		return false;
+	}
+	return true;
+}
+
+/* Given one key, generates another by encrypting a simple
+   message. This is used to generate several independent
+   keys for functions that need more than one (e.g. the MAC).
+ */
+function generateNewKey(key, num) {
+	var cipher = new sjcl.cipher.aes(key);
+	var msg = [num, num, num, num];
+	return cipher.encrypt(msg);
+}
+
+//generate master key from password and salt
+//the former is a string, the latter a bit array
+// what is returned needs to be 128 bits
+function recreate_master_key(password,salt) {
+	return sjcl.misc.pbkdf2(password, salt, null, 128, null);
 }
 
 // initial pad.
 // rounds bitArray to nearest 32
 // then appends bitLength
 function padOnce(bits) {
-    var l = bits.length;
-    var bl = sjcl.bitArray.bitLength(bits);
-    var round = (32 - bl % 32) % 32;
-    if (round != 0) {
-	var rounder = [sjcl.bitArray.partial(round, 0)];
-	bits = sjcl.bitArray.concat(bits, rounder);
-    }
-    return sjcl.bitArray.concat(bits, [bl]);
+	var l = bits.length;
+	var bl = sjcl.bitArray.bitLength(bits);
+	var round = (32 - bl % 32) % 32;
+	if (round != 0) {
+		var rounder = [sjcl.bitArray.partial(round, 0)];
+		bits = sjcl.bitArray.concat(bits, rounder);
+	}
+	return sjcl.bitArray.concat(bits, [bl]);
 }
 
+//Pads a bit array as much as necessary.
 function padBits(bits) {
-    var l = bits.length;
-    var bl = sjcl.bitArray.bitLength(bits);
-    var bits = padOnce(bits);
-    var toPad = 4 - (l + 1) % 4;
-    if (toPad == -1) toPad = 3;
-    var pad = new Array
-    for (var i = 0; i < toPad; i++) {
-	pad[i] = 0;
-    }
-    var padded = bits.concat(pad);
-    padded = sjcl.bitArray.clamp(padded, 128);
-    return bits.concat(pad);
+	var l = bits.length;
+	var bl = sjcl.bitArray.bitLength(bits);
+	var bits = padOnce(bits);
+	var toPad = 4 - (l + 1) % 4;
+	if (toPad == -1) toPad = 3;
+	var pad = new Array;
+	for (var i = 0; i < toPad; i++) {
+		pad[i] = 0;
+	}
+	var padded = bits.concat(pad);
+	padded = sjcl.bitArray.clamp(padded, 128);
+	return bits.concat(pad);
 }
 
+// Removes the padding on a message for decrpytion.
 function removePad(bits) {
-    var l = bits.length;
-    var bl;
-    for (var i = l - 1; i >= 0; i--) { // go from back to front
-	bl = bits[i];
-	if (bl > 0) break;
-    }
-    return sjcl.bitArray.clamp(bits, bl);
+	var l = bits.length;
+	var bl;
+	for (var i = l - 1; i >= 0; i--) { // go from back to front
+		bl = bits[i];
+		if (bl > 0) break;
+	}
+	return sjcl.bitArray.clamp(bits, bl);
 }
-
-function validateKey(key) {
-    var bits;
-    try {
-	bits = sjcl.codec.base64.toBits(key);
-    } catch (err) {
-	alert("Key is not base 64");
-	return false;
-    }
-    // is key correct length?
-    var l = sjcl.bitArray.bitLength(bits);
-    if (l != 128) {
-	alert("Key is not the correct length.");
-	return false;
-    }
-    return true;
-}
-
-function generateNewKey(key, num) {
-    var cipher = new sjcl.cipher.aes(key);
-    var msg = [num, num, num, num];
-    return cipher.encrypt(msg);
-}
-
-
-
-//generate master key from password and salt
-//the former is a string, the latter a bit array
-// what is returned needs to be 128 bits
-function recreate_master_key(password,salt) {
-    return sjcl.misc.pbkdf2(password, salt, null, 128, null);
-}
-
-
-
-
 
 /////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////
@@ -425,12 +476,12 @@ function recreate_master_key(password,salt) {
 
   A silly example of this in action:
 
-    var key1 = new Array(8);
-    var cipher = new sjcl.cipher.aes(key1);
-    var dumbtext = new Array(4);
-    dumbtext[0] = 1; dumbtext[1] = 2; dumbtext[2] = 3; dumbtext[3] = 4;
-    var ctext = cipher.encrypt(dumbtext);
-    var outtext = cipher.decrypt(ctext);
+	var key1 = new Array(8);
+	var cipher = new sjcl.cipher.aes(key1);
+	var dumbtext = new Array(4);
+	dumbtext[0] = 1; dumbtext[1] = 2; dumbtext[2] = 3; dumbtext[3] = 4;
+	var ctext = cipher.encrypt(dumbtext);
+	var outtext = cipher.decrypt(ctext);
 
   Obviously our key is just all zeroes in this case, but this should illustrate
   the point.
@@ -447,18 +498,18 @@ function recreate_master_key(password,salt) {
 
 var cs255 = {
   localStorage: {
-    setItem: function(key, value) {
-      localStorage.setItem(key, value);
-      var newEntries = {};
-      newEntries[key] = value;
-      chrome.storage.local.set(newEntries);
-    },
-    getItem: function(key) {
-      return localStorage.getItem(key);
-    },
-    clear: function() {
-      chrome.storage.local.clear();
-    }
+	setItem: function(key, value) {
+	  localStorage.setItem(key, value);
+	  var newEntries = {};
+	  newEntries[key] = value;
+	  chrome.storage.local.set(newEntries);
+	},
+	getItem: function(key) {
+	  return localStorage.getItem(key);
+	},
+	clear: function() {
+	  chrome.storage.local.clear();
+	}
   }
 }
 
@@ -469,9 +520,9 @@ if (typeof chrome.storage === "undefined") {
 else {
   // See if there are any values stored with the extension.
   chrome.storage.local.get(null, function(onDisk) {
-    for (key in onDisk) {
-      localStorage.setItem(key, onDisk[key]);
-    }
+	for (key in onDisk) {
+	  localStorage.setItem(key, onDisk[key]);
+	}
   });
 }
 
@@ -486,7 +537,7 @@ function GetRandomValues(n) {
   // so let's convert it to a regular array for our purposes.
   var regularArray = [];
   for (var i = 0; i < entropy.length; i++) {
-    regularArray.push(entropy[i]);
+	regularArray.push(entropy[i]);
   }
   return regularArray;
 }
@@ -503,7 +554,7 @@ AssertException.prototype.toString = function() {
 
 function assert(exp, message) {
   if (!exp) {
-    throw new AssertException(message);
+	throw new AssertException(message);
   }
 }
 
@@ -513,7 +564,7 @@ function rot13(text) {
   return text.replace(/[a-zA-Z]/g,
 
   function(c) {
-    return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
+	return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
   });
 }
 
@@ -543,25 +594,25 @@ function hasClass(element, cls) {
 
 function DocChanged(e) {
   if (document.URL.match(/groups/)) {
-    //Check for adding encrypt button for comments
-    if (e.target.nodeType != 3) {
-      decryptTextOfChildNodes(e.target);
-      decryptTextOfChildNodes2(e.target);
-      if (!hasClass(e.target, "crypto")) {
-        addEncryptCommentButton(e.target);
-      } else {
-        return;
-      }
-    }
+	//Check for adding encrypt button for comments
+	if (e.target.nodeType != 3) {
+	  decryptTextOfChildNodes(e.target);
+	  decryptTextOfChildNodes2(e.target);
+	  if (!hasClass(e.target, "crypto")) {
+		addEncryptCommentButton(e.target);
+	  } else {
+		return;
+	  }
+	}
 
-    tryAddEncryptButton();
+	tryAddEncryptButton();
   }
   //Check for adding keys-table
   if (document.URL.match('settings')) {
-    if (!document.getElementById('cs255-keys-table') && !hasClass(e.target, "crypto")) {
-      AddEncryptionTab();
-      UpdateKeysTable();
-    }
+	if (!document.getElementById('cs255-keys-table') && !hasClass(e.target, "crypto")) {
+	  AddEncryptionTab();
+	  UpdateKeysTable();
+	}
   }
 }
 //Decryption of posts
@@ -571,13 +622,13 @@ function decryptTextOfChildNodes(e) {
   var msgs = e.getElementsByClassName('messageBody');
 
   if (msgs.length > 0) {
-    var msgs_array = new Array();
-    for (var i = 0; i < msgs.length; ++i) {
-      msgs_array[i] = msgs[i];
-    }
-    for (var i = 0; i < msgs_array.length; ++i) {
-      DecryptMsg(msgs_array[i]);
-    }
+	var msgs_array = new Array();
+	for (var i = 0; i < msgs.length; ++i) {
+	  msgs_array[i] = msgs[i];
+	}
+	for (var i = 0; i < msgs_array.length; ++i) {
+	  DecryptMsg(msgs_array[i]);
+	}
   }
 
 }
@@ -588,13 +639,13 @@ function decryptTextOfChildNodes2(e) {
   var msgs = e.getElementsByClassName('UFICommentBody');
 
   if (msgs.length > 0) {
-    var msgs_array = new Array();
-    for (var i = 0; i < msgs.length; ++i) {
-      msgs_array[i] = msgs[i];
-    }
-    for (var i = 0; i < msgs_array.length; ++i) {
-      DecryptMsg(msgs_array[i]);
-    }
+	var msgs_array = new Array();
+	for (var i = 0; i < msgs.length; ++i) {
+	  msgs_array[i] = msgs[i];
+	}
+	for (var i = 0; i < msgs_array.length; ++i) {
+	  DecryptMsg(msgs_array[i]);
+	}
   }
 
 }
@@ -609,23 +660,23 @@ function AddEncryptionTab() {
 
   // On the Account Settings page, show the key setups
   if (document.URL.match('settings')) {
-    var div = document.getElementById('contentArea');
-    if (div) {
-      var h2 = document.createElement('h2');
-      h2.setAttribute("class", "crypto");
-      h2.innerHTML = "CS255 Keys";
-      div.appendChild(h2);
+	var div = document.getElementById('contentArea');
+	if (div) {
+	  var h2 = document.createElement('h2');
+	  h2.setAttribute("class", "crypto");
+	  h2.innerHTML = "CS255 Keys";
+	  div.appendChild(h2);
 
-      var table = document.createElement('table');
-      table.id = 'cs255-keys-table';
-      table.style.borderCollapse = "collapse";
-      table.setAttribute("class", "crypto");
-      table.setAttribute('cellpadding', 3);
-      table.setAttribute('cellspacing', 1);
-      table.setAttribute('border', 1);
-      table.setAttribute('width', "80%");
-      div.appendChild(table);
-    }
+	  var table = document.createElement('table');
+	  table.id = 'cs255-keys-table';
+	  table.style.borderCollapse = "collapse";
+	  table.setAttribute("class", "crypto");
+	  table.setAttribute('cellpadding', 3);
+	  table.setAttribute('cellspacing', 1);
+	  table.setAttribute('border', 1);
+	  table.setAttribute('width', "80%");
+	  div.appendChild(table);
+	}
   }
 }
 
@@ -636,7 +687,7 @@ function tryAddEncryptButton(update) {
 
   // Check if it already exists.
   if (document.getElementById('encrypt-button')) {
-    return;
+	return;
   }
 
   var encryptWrapper = document.createElement("span");
@@ -658,9 +709,9 @@ function tryAddEncryptButton(update) {
 
   var liParent;
   try {
-    liParent = document.getElementsByName("xhpc_message")[0].parentNode;
+	liParent = document.getElementsByName("xhpc_message")[0].parentNode;
   } catch(e) {
-    return;
+	return;
   }
   liParent.appendChild(encryptWrapper);
 
@@ -675,36 +726,36 @@ function addEncryptCommentButton(e) {
 
   for (var j = 0; j < commentAreas.length; j++) {
 
-    if (commentAreas[j].parentNode.parentNode.parentNode.parentNode.getElementsByClassName("encrypt-comment-button").length > 0) {
-      continue;
-    }
+	if (commentAreas[j].parentNode.parentNode.parentNode.parentNode.getElementsByClassName("encrypt-comment-button").length > 0) {
+	  continue;
+	}
 
-    var encryptWrapper = document.createElement("span");
-    encryptWrapper.setAttribute("class", "");
-    encryptWrapper.style.cssFloat = "right";
-    encryptWrapper.style.cssPadding = "2px";
+	var encryptWrapper = document.createElement("span");
+	encryptWrapper.setAttribute("class", "");
+	encryptWrapper.style.cssFloat = "right";
+	encryptWrapper.style.cssPadding = "2px";
 
 
-    var encryptLabel = document.createElement("label");
-    encryptLabel.setAttribute("class", "submitBtn uiButton uiButtonConfirm crypto");
+	var encryptLabel = document.createElement("label");
+	encryptLabel.setAttribute("class", "submitBtn uiButton uiButtonConfirm crypto");
 
-    var encryptButton = document.createElement("input");
-    encryptButton.setAttribute("value", "Encrypt");
-    encryptButton.setAttribute("type", "button");
-    encryptButton.setAttribute("class", "encrypt-comment-button crypto");
-    encryptButton.addEventListener("click", DoEncrypt, false);
+	var encryptButton = document.createElement("input");
+	encryptButton.setAttribute("value", "Encrypt");
+	encryptButton.setAttribute("type", "button");
+	encryptButton.setAttribute("class", "encrypt-comment-button crypto");
+	encryptButton.addEventListener("click", DoEncrypt, false);
 
-    encryptLabel.appendChild(encryptButton);
-    encryptWrapper.appendChild(encryptLabel);
+	encryptLabel.appendChild(encryptButton);
+	encryptWrapper.appendChild(encryptLabel);
 
-    commentAreas[j].parentNode.parentNode.parentNode.parentNode.appendChild(encryptWrapper);
+	commentAreas[j].parentNode.parentNode.parentNode.parentNode.appendChild(encryptWrapper);
   }
 }
 
 function AddElements() {
   if (document.URL.match(/groups/)) {
-    tryAddEncryptButton();
-    addEncryptCommentButton(document);
+	tryAddEncryptButton();
+	addEncryptCommentButton(document);
   }
   AddEncryptionTab()
 }
@@ -713,8 +764,8 @@ function GenerateKeyWrapper() {
   var group = document.getElementById('gen-key-group').value;
 
   if (group.length < 1) {
-    alert("You need to set a group");
-    return;
+	alert("You need to set a group");
+	return;
   }
 
   GenerateKey(group);
@@ -743,26 +794,26 @@ function UpdateKeysTable() {
 
   // keys
   for (var group in keys) {
-    var row = document.createElement('tr');
-    row.setAttribute("data-group", group);
-    var td = document.createElement('td');
-    td.innerHTML = group;
-    row.appendChild(td);
-    td = document.createElement('td');
-    td.innerHTML = keys[group];
-    row.appendChild(td);
-    td = document.createElement('td');
+	var row = document.createElement('tr');
+	row.setAttribute("data-group", group);
+	var td = document.createElement('td');
+	td.innerHTML = group;
+	row.appendChild(td);
+	td = document.createElement('td');
+	td.innerHTML = keys[group];
+	row.appendChild(td);
+	td = document.createElement('td');
 
-    var button = document.createElement('input');
-    button.type = 'button';
-    button.value = 'Delete';
-    button.addEventListener("click", function(event) {
-      DeleteKey(event.target.parentNode.parentNode);
-    }, false);
-    td.appendChild(button);
-    row.appendChild(td);
+	var button = document.createElement('input');
+	button.type = 'button';
+	button.value = 'Delete';
+	button.addEventListener("click", function(event) {
+	  DeleteKey(event.target.parentNode.parentNode);
+	}, false);
+	td.appendChild(button);
+	row.appendChild(td);
 
-    table.appendChild(row);
+	table.appendChild(row);
   }
 
   // add friend line
@@ -808,12 +859,12 @@ function UpdateKeysTable() {
 function AddKey() {
   var g = document.getElementById('new-key-group').value;
   if (g.length < 1) {
-    alert("You need to set a group");
-    return;
+	alert("You need to set a group");
+	return;
   }
   var k = document.getElementById('new-key-key').value;
-    var isValid = validateKey(k);
-    if (!isValid) return; // stop adding the key
+	var isValid = validateKey(k);
+	if (!isValid) return; // stop adding the key
   keys[g] = k;
   SaveKeys();
   UpdateKeysTable();
@@ -830,12 +881,12 @@ function DoEncrypt(e) {
   // triggered by the encrypt button
   // Contents of post or comment are saved to dummy node. So updation of contens of dummy node is also required after encryption
   if (e.target.className == "encrypt-button") {
-    var textHolder = document.getElementsByClassName("uiTextareaAutogrow input mentionsTextarea textInput")[0];
-    var dummy = document.getElementsByName("xhpc_message")[0];
+	var textHolder = document.getElementsByClassName("uiTextareaAutogrow input mentionsTextarea textInput")[0];
+	var dummy = document.getElementsByName("xhpc_message")[0];
   } else {
-    console.log(e.target);
-    var dummy = e.target.parentNode.parentNode.parentNode.parentNode.parentNode.parentNode.getElementsByClassName("mentionsHidden")[0];
-    var textHolder = e.target.parentNode.parentNode.parentNode.parentNode.getElementsByClassName("textInput mentionsTextarea")[0];
+	console.log(e.target);
+	var dummy = e.target.parentNode.parentNode.parentNode.parentNode.parentNode.parentNode.getElementsByClassName("mentionsHidden")[0];
+	var textHolder = e.target.parentNode.parentNode.parentNode.parentNode.getElementsByClassName("textInput mentionsTextarea")[0];
   }
 
   //Get the plain text
@@ -867,44 +918,44 @@ function GetMsgText(msg) {
 
 function getTextFromChildren(parent, skipClass, results) {
   var children = parent.childNodes,
-    item;
+	item;
   var re = new RegExp("\\b" + skipClass + "\\b");
   for (var i = 0, len = children.length; i < len; i++) {
-    item = children[i];
-    // if text node, collect it's text
-    if (item.nodeType == 3) {
-      results.push(item.nodeValue);
-    } else if (!item.className || !item.className.match(re)) {
-      // if it has a className and it doesn't match 
-      // what we're skipping, then recurse on it
-      getTextFromChildren(item, skipClass, results);
-    }
+	item = children[i];
+	// if text node, collect it's text
+	if (item.nodeType == 3) {
+	  results.push(item.nodeValue);
+	} else if (!item.className || !item.className.match(re)) {
+	  // if it has a className and it doesn't match 
+	  // what we're skipping, then recurse on it
+	  getTextFromChildren(item, skipClass, results);
+	}
   }
 }
 
 function GetMsgTextForDecryption(msg) {
   try {
-    var visibleDiv = msg.getElementsByClassName("text_exposed_root");
-    if (visibleDiv.length) {
-      var visibleDiv = document.getElementsByClassName("text_exposed_root");
-      var text = [];
-      getTextFromChildren(visibleDiv[0], "text_exposed_hide", text);
-      var mg = text.join("");
-      return mg;
+	var visibleDiv = msg.getElementsByClassName("text_exposed_root");
+	if (visibleDiv.length) {
+	  var visibleDiv = document.getElementsByClassName("text_exposed_root");
+	  var text = [];
+	  getTextFromChildren(visibleDiv[0], "text_exposed_hide", text);
+	  var mg = text.join("");
+	  return mg;
 
-    } else {
-      var innerText = msg.innerText;
+	} else {
+	  var innerText = msg.innerText;
 
-      // Get rid of the trailing newline, if there is one.
-      if (innerText[innerText.length-1] === '\n') {
-        innerText = innerText.slice(0, innerText.length-1);
-      }
+	  // Get rid of the trailing newline, if there is one.
+	  if (innerText[innerText.length-1] === '\n') {
+		innerText = innerText.slice(0, innerText.length-1);
+	  }
 
-      return innerText;
-    }
+	  return innerText;
+	}
 
   } catch(err) {
-    return msg.innerText;
+	return msg.innerText;
   }
 }
 
@@ -913,7 +964,7 @@ function wbr(str, num) {
   //  return text + "<wbr>" + char; 
   //}); 
   return str.replace(RegExp("(.{" + num + "})(.)", "g"), function(all, text, char) {
-    return text + "<wbr>" + char;
+	return text + "<wbr>" + char;
   });
 }
 
@@ -926,37 +977,37 @@ function SetMsgText(msg, new_text) {
 function escapeHtml(string) {
 
   var entityMap = {
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': '&quot;',
-    "'": '&#39;',
-    "/": '&#x2F;'
+	"&": "&amp;",
+	"<": "&lt;",
+	">": "&gt;",
+	'"': '&quot;',
+	"'": '&#39;',
+	"/": '&#x2F;'
   };
 
   return String(string).replace(/[&<>"'\/]/g, function (s) {
-    return entityMap[s];
+	return entityMap[s];
   });
 }
 
 function DecryptMsg(msg) {
   // we mark the box with the class "decrypted" to prevent attempting to decrypt it multiple times.
   if (!/decrypted/.test(msg.className)) {
-    var txt = GetMsgTextForDecryption(msg);
+	var txt = GetMsgTextForDecryption(msg);
 
-    var displayHTML;
-    try {
-      var group = CurrentGroup();
-      var decryptedMsg = Decrypt(txt, group);
-      decryptedMsg = escapeHtml(decryptedMsg);
-      displayHTML = '<font color="#00AA00">Decrypted message: ' + decryptedMsg + '</font><br><hr>' + txt;
-    }
-    catch (e) {
-      displayHTML = '<font color="#FF88">Could not decrypt (' + e + ').</font><br><hr>' + txt;
-    }
+	var displayHTML;
+	try {
+	  var group = CurrentGroup();
+	  var decryptedMsg = Decrypt(txt, group);
+	  decryptedMsg = escapeHtml(decryptedMsg);
+	  displayHTML = '<font color="#00AA00">Decrypted message: ' + decryptedMsg + '</font><br><hr>' + txt;
+	}
+	catch (e) {
+	  displayHTML = '<font color="#FF88">Could not decrypt (' + e + ').</font><br><hr>' + txt;
+	}
 
-    SetMsgText(msg, displayHTML);
-    msg.className += " decrypted";
+	SetMsgText(msg, displayHTML);
+	msg.className += " decrypted";
   }
 }
 
@@ -1009,37 +1060,37 @@ var sjcl = { /** @namespace Symmetric ciphers. */
 
   /** @namespace Exceptions. */
   exception: { /** @class Ciphertext is corrupt. */
-    corrupt: function(message) {
-      this.toString = function() {
-        return "CORRUPT: " + this.message;
-      };
-      this.message = message;
-    },
+	corrupt: function(message) {
+	  this.toString = function() {
+		return "CORRUPT: " + this.message;
+	  };
+	  this.message = message;
+	},
 
-    /** @class Invalid parameter. */
-    invalid: function(message) {
-      this.toString = function() {
-        return "INVALID: " + this.message;
-      };
-      this.message = message;
-    },
+	/** @class Invalid parameter. */
+	invalid: function(message) {
+	  this.toString = function() {
+		return "INVALID: " + this.message;
+	  };
+	  this.message = message;
+	},
 
-    /** @class Bug or missing feature in SJCL. */
-    bug: function(message) {
-      this.toString = function() {
-        return "BUG: " + this.message;
-      };
-      this.message = message;
-    },
+	/** @class Bug or missing feature in SJCL. */
+	bug: function(message) {
+	  this.toString = function() {
+		return "BUG: " + this.message;
+	  };
+	  this.message = message;
+	},
 
-    // Added by mbarrien to fix an SJCL bug.
-    /** @class Not ready to encrypt. */
-    notready: function(message) {
-      this.toString = function() {
-        return "NOTREADY: " + this.message;
-      };
-      this.message = message;
-    }
+	// Added by mbarrien to fix an SJCL bug.
+	/** @class Not ready to encrypt. */
+	notready: function(message) {
+	  this.toString = function() {
+		return "NOTREADY: " + this.message;
+	  };
+	  this.message = message;
+	}
   }
 };
 
@@ -1071,46 +1122,46 @@ var sjcl = { /** @namespace Symmetric ciphers. */
  */
 sjcl.cipher.aes = function(key) {
   if (!this._tables[0][0][0]) {
-    this._precompute();
+	this._precompute();
   }
 
   var i, j, tmp, encKey, decKey, sbox = this._tables[0][4],
-    decTable = this._tables[1],
-    keyLen = key.length,
-    rcon = 1;
+	decTable = this._tables[1],
+	keyLen = key.length,
+	rcon = 1;
 
   if (keyLen !== 4 && keyLen !== 6 && keyLen !== 8) {
-    throw new sjcl.exception.invalid("invalid aes key size");
+	throw new sjcl.exception.invalid("invalid aes key size");
   }
 
   this._key = [encKey = key.slice(0), decKey = []];
 
   // schedule encryption keys
   for (i = keyLen; i < 4 * keyLen + 28; i++) {
-    tmp = encKey[i - 1];
+	tmp = encKey[i - 1];
 
-    // apply sbox
-    if (i % keyLen === 0 || (keyLen === 8 && i % keyLen === 4)) {
-      tmp = sbox[tmp >>> 24] << 24 ^ sbox[tmp >> 16 & 255] << 16 ^ sbox[tmp >> 8 & 255] << 8 ^ sbox[tmp & 255];
+	// apply sbox
+	if (i % keyLen === 0 || (keyLen === 8 && i % keyLen === 4)) {
+	  tmp = sbox[tmp >>> 24] << 24 ^ sbox[tmp >> 16 & 255] << 16 ^ sbox[tmp >> 8 & 255] << 8 ^ sbox[tmp & 255];
 
-      // shift rows and add rcon
-      if (i % keyLen === 0) {
-        tmp = tmp << 8 ^ tmp >>> 24 ^ rcon << 24;
-        rcon = rcon << 1 ^ (rcon >> 7) * 283;
-      }
-    }
+	  // shift rows and add rcon
+	  if (i % keyLen === 0) {
+		tmp = tmp << 8 ^ tmp >>> 24 ^ rcon << 24;
+		rcon = rcon << 1 ^ (rcon >> 7) * 283;
+	  }
+	}
 
-    encKey[i] = encKey[i - keyLen] ^ tmp;
+	encKey[i] = encKey[i - keyLen] ^ tmp;
   }
 
   // schedule decryption keys
   for (j = 0; i; j++, i--) {
-    tmp = encKey[j & 3 ? i : i - 4];
-    if (i <= 4 || j < 4) {
-      decKey[j] = tmp;
-    } else {
-      decKey[j] = decTable[0][sbox[tmp >>> 24]] ^ decTable[1][sbox[tmp >> 16 & 255]] ^ decTable[2][sbox[tmp >> 8 & 255]] ^ decTable[3][sbox[tmp & 255]];
-    }
+	tmp = encKey[j & 3 ? i : i - 4];
+	if (i <= 4 || j < 4) {
+	  decKey[j] = tmp;
+	} else {
+	  decKey[j] = decTable[0][sbox[tmp >>> 24]] ^ decTable[1][sbox[tmp >> 16 & 255]] ^ decTable[2][sbox[tmp >> 8 & 255]] ^ decTable[3][sbox[tmp & 255]];
+	}
   }
 };
 
@@ -1128,7 +1179,7 @@ sjcl.cipher.aes.prototype = {
    * @return {Array} The ciphertext.
    */
   encrypt: function(data) {
-      return this._crypt(data, 0);
+	  return this._crypt(data, 0);
   },
 
   /**
@@ -1137,7 +1188,7 @@ sjcl.cipher.aes.prototype = {
    * @return {Array} The plaintext.
    */
   decrypt: function(data) {
-    return this._crypt(data, 1);
+	return this._crypt(data, 1);
   },
 
   /**
@@ -1153,20 +1204,20 @@ sjcl.cipher.aes.prototype = {
    * @private
    */
   _tables: [
-    [
-      [],
-      [],
-      [],
-      [],
-      []
-    ],
-    [
-      [],
-      [],
-      [],
-      [],
-      []
-    ]
+	[
+	  [],
+	  [],
+	  [],
+	  [],
+	  []
+	],
+	[
+	  [],
+	  [],
+	  [],
+	  [],
+	  []
+	]
   ],
 
   /**
@@ -1175,42 +1226,42 @@ sjcl.cipher.aes.prototype = {
    * @private
    */
   _precompute: function() {
-    var encTable = this._tables[0],
-      decTable = this._tables[1],
-      sbox = encTable[4],
-      sboxInv = decTable[4],
-      i, x, xInv, d = [],
-      th = [],
-      x2, x4, x8, s, tEnc, tDec;
+	var encTable = this._tables[0],
+	  decTable = this._tables[1],
+	  sbox = encTable[4],
+	  sboxInv = decTable[4],
+	  i, x, xInv, d = [],
+	  th = [],
+	  x2, x4, x8, s, tEnc, tDec;
 
-    // Compute double and third tables
-    for (i = 0; i < 256; i++) {
-      th[(d[i] = i << 1 ^ (i >> 7) * 283) ^ i] = i;
-    }
+	// Compute double and third tables
+	for (i = 0; i < 256; i++) {
+	  th[(d[i] = i << 1 ^ (i >> 7) * 283) ^ i] = i;
+	}
 
-    for (x = xInv = 0; !sbox[x]; x ^= x2 || 1, xInv = th[xInv] || 1) {
-      // Compute sbox
-      s = xInv ^ xInv << 1 ^ xInv << 2 ^ xInv << 3 ^ xInv << 4;
-      s = s >> 8 ^ s & 255 ^ 99;
-      sbox[x] = s;
-      sboxInv[s] = x;
+	for (x = xInv = 0; !sbox[x]; x ^= x2 || 1, xInv = th[xInv] || 1) {
+	  // Compute sbox
+	  s = xInv ^ xInv << 1 ^ xInv << 2 ^ xInv << 3 ^ xInv << 4;
+	  s = s >> 8 ^ s & 255 ^ 99;
+	  sbox[x] = s;
+	  sboxInv[s] = x;
 
-      // Compute MixColumns
-      x8 = d[x4 = d[x2 = d[x]]];
-      tDec = x8 * 0x1010101 ^ x4 * 0x10001 ^ x2 * 0x101 ^ x * 0x1010100;
-      tEnc = d[s] * 0x101 ^ s * 0x1010100;
+	  // Compute MixColumns
+	  x8 = d[x4 = d[x2 = d[x]]];
+	  tDec = x8 * 0x1010101 ^ x4 * 0x10001 ^ x2 * 0x101 ^ x * 0x1010100;
+	  tEnc = d[s] * 0x101 ^ s * 0x1010100;
 
-      for (i = 0; i < 4; i++) {
-        encTable[i][x] = tEnc = tEnc << 24 ^ tEnc >>> 8;
-        decTable[i][s] = tDec = tDec << 24 ^ tDec >>> 8;
-      }
-    }
+	  for (i = 0; i < 4; i++) {
+		encTable[i][x] = tEnc = tEnc << 24 ^ tEnc >>> 8;
+		decTable[i][s] = tDec = tDec << 24 ^ tDec >>> 8;
+	  }
+	}
 
-    // Compactify.  Considerable speedup on Firefox.
-    for (i = 0; i < 5; i++) {
-      encTable[i] = encTable[i].slice(0);
-      decTable[i] = decTable[i].slice(0);
-    }
+	// Compactify.  Considerable speedup on Firefox.
+	for (i = 0; i < 5; i++) {
+	  encTable[i] = encTable[i].slice(0);
+	  decTable[i] = decTable[i].slice(0);
+	}
   },
 
   /**
@@ -1221,52 +1272,52 @@ sjcl.cipher.aes.prototype = {
    * @private
    */
   _crypt: function(input, dir) {
-    if (input.length !== 4) {
-      throw new sjcl.exception.invalid("invalid aes block size");
-    }
+	if (input.length !== 4) {
+	  throw new sjcl.exception.invalid("invalid aes block size");
+	}
 
-    var key = this._key[dir],
-      // state variables a,b,c,d are loaded with pre-whitened data
-      a = input[0] ^ key[0],
-      b = input[dir ? 3 : 1] ^ key[1],
-      c = input[2] ^ key[2],
-      d = input[dir ? 1 : 3] ^ key[3],
-      a2, b2, c2,
+	var key = this._key[dir],
+	  // state variables a,b,c,d are loaded with pre-whitened data
+	  a = input[0] ^ key[0],
+	  b = input[dir ? 3 : 1] ^ key[1],
+	  c = input[2] ^ key[2],
+	  d = input[dir ? 1 : 3] ^ key[3],
+	  a2, b2, c2,
 
-      nInnerRounds = key.length / 4 - 2,
-      i, kIndex = 4,
-      out = [0, 0, 0, 0],
-      table = this._tables[dir],
+	  nInnerRounds = key.length / 4 - 2,
+	  i, kIndex = 4,
+	  out = [0, 0, 0, 0],
+	  table = this._tables[dir],
 
-      // load up the tables
-      t0 = table[0],
-      t1 = table[1],
-      t2 = table[2],
-      t3 = table[3],
-      sbox = table[4];
+	  // load up the tables
+	  t0 = table[0],
+	  t1 = table[1],
+	  t2 = table[2],
+	  t3 = table[3],
+	  sbox = table[4];
 
-    // Inner rounds.  Cribbed from OpenSSL.
-    for (i = 0; i < nInnerRounds; i++) {
-      a2 = t0[a >>> 24] ^ t1[b >> 16 & 255] ^ t2[c >> 8 & 255] ^ t3[d & 255] ^ key[kIndex];
-      b2 = t0[b >>> 24] ^ t1[c >> 16 & 255] ^ t2[d >> 8 & 255] ^ t3[a & 255] ^ key[kIndex + 1];
-      c2 = t0[c >>> 24] ^ t1[d >> 16 & 255] ^ t2[a >> 8 & 255] ^ t3[b & 255] ^ key[kIndex + 2];
-      d = t0[d >>> 24] ^ t1[a >> 16 & 255] ^ t2[b >> 8 & 255] ^ t3[c & 255] ^ key[kIndex + 3];
-      kIndex += 4;
-      a = a2;
-      b = b2;
-      c = c2;
-    }
+	// Inner rounds.  Cribbed from OpenSSL.
+	for (i = 0; i < nInnerRounds; i++) {
+	  a2 = t0[a >>> 24] ^ t1[b >> 16 & 255] ^ t2[c >> 8 & 255] ^ t3[d & 255] ^ key[kIndex];
+	  b2 = t0[b >>> 24] ^ t1[c >> 16 & 255] ^ t2[d >> 8 & 255] ^ t3[a & 255] ^ key[kIndex + 1];
+	  c2 = t0[c >>> 24] ^ t1[d >> 16 & 255] ^ t2[a >> 8 & 255] ^ t3[b & 255] ^ key[kIndex + 2];
+	  d = t0[d >>> 24] ^ t1[a >> 16 & 255] ^ t2[b >> 8 & 255] ^ t3[c & 255] ^ key[kIndex + 3];
+	  kIndex += 4;
+	  a = a2;
+	  b = b2;
+	  c = c2;
+	}
 
-    // Last round.
-    for (i = 0; i < 4; i++) {
-      out[dir ? 3 & -i : i] = sbox[a >>> 24] << 24 ^ sbox[b >> 16 & 255] << 16 ^ sbox[c >> 8 & 255] << 8 ^ sbox[d & 255] ^ key[kIndex++];
-      a2 = a;
-      a = b;
-      b = c;
-      c = d;
-      d = a2;
-    }
-    return out;
+	// Last round.
+	for (i = 0; i < 4; i++) {
+	  out[dir ? 3 & -i : i] = sbox[a >>> 24] << 24 ^ sbox[b >> 16 & 255] << 16 ^ sbox[c >> 8 & 255] << 8 ^ sbox[d & 255] ^ key[kIndex++];
+	  a2 = a;
+	  a = b;
+	  b = c;
+	  c = d;
+	  d = a2;
+	}
+	return out;
   }
 };
 
@@ -1310,8 +1361,8 @@ sjcl.bitArray = {
    * @return {bitArray} The requested slice.
    */
   bitSlice: function(a, bstart, bend) {
-    a = sjcl.bitArray._shiftRight(a.slice(bstart / 32), 32 - (bstart & 31)).slice(1);
-    return(bend === undefined) ? a : sjcl.bitArray.clamp(a, bend - bstart);
+	a = sjcl.bitArray._shiftRight(a.slice(bstart / 32), 32 - (bstart & 31)).slice(1);
+	return(bend === undefined) ? a : sjcl.bitArray.clamp(a, bend - bstart);
   },
 
   /**
@@ -1321,17 +1372,17 @@ sjcl.bitArray = {
    * @return {bitArray} The concatenation of a1 and a2.
    */
   concat: function(a1, a2) {
-    if (a1.length === 0 || a2.length === 0) {
-      return a1.concat(a2);
-    }
+	if (a1.length === 0 || a2.length === 0) {
+	  return a1.concat(a2);
+	}
 
-    var out, i, last = a1[a1.length - 1],
-      shift = sjcl.bitArray.getPartial(last);
-    if (shift === 32) {
-      return a1.concat(a2);
-    } else {
-      return sjcl.bitArray._shiftRight(a2, shift, last | 0, a1.slice(0, a1.length - 1));
-    }
+	var out, i, last = a1[a1.length - 1],
+	  shift = sjcl.bitArray.getPartial(last);
+	if (shift === 32) {
+	  return a1.concat(a2);
+	} else {
+	  return sjcl.bitArray._shiftRight(a2, shift, last | 0, a1.slice(0, a1.length - 1));
+	}
   },
 
   /**
@@ -1340,13 +1391,13 @@ sjcl.bitArray = {
    * @return {Number} The length of a, in bits.
    */
   bitLength: function(a) {
-    var l = a.length,
-      x;
-    if (l === 0) {
-      return 0;
-    }
-    x = a[l - 1];
-    return(l - 1) * 32 + sjcl.bitArray.getPartial(x);
+	var l = a.length,
+	  x;
+	if (l === 0) {
+	  return 0;
+	}
+	x = a[l - 1];
+	return(l - 1) * 32 + sjcl.bitArray.getPartial(x);
   },
 
   /**
@@ -1356,16 +1407,16 @@ sjcl.bitArray = {
    * @return {bitArray} A new array, truncated to len bits.
    */
   clamp: function(a, len) {
-    if (a.length * 32 < len) {
-      return a;
-    }
-    a = a.slice(0, Math.ceil(len / 32));
-    var l = a.length;
-    len = len & 31;
-    if (l > 0 && len) {
-      a[l - 1] = sjcl.bitArray.partial(len, a[l - 1] & 0x80000000 >> (len - 1), 1);
-    }
-    return a;
+	if (a.length * 32 < len) {
+	  return a;
+	}
+	a = a.slice(0, Math.ceil(len / 32));
+	var l = a.length;
+	len = len & 31;
+	if (l > 0 && len) {
+	  a[l - 1] = sjcl.bitArray.partial(len, a[l - 1] & 0x80000000 >> (len - 1), 1);
+	}
+	return a;
   },
 
   /**
@@ -1376,10 +1427,10 @@ sjcl.bitArray = {
    * @return {Number} The partial word.
    */
   partial: function(len, x, _end) {
-    if (len === 32) {
-      return x;
-    }
-    return(_end ? x | 0 : x << (32 - len)) + len * 0x10000000000;
+	if (len === 32) {
+	  return x;
+	}
+	return(_end ? x | 0 : x << (32 - len)) + len * 0x10000000000;
   },
 
   /**
@@ -1388,7 +1439,7 @@ sjcl.bitArray = {
    * @return {Number} The number of bits used by the partial word.
    */
   getPartial: function(x) {
-    return Math.round(x / 0x10000000000) || 32;
+	return Math.round(x / 0x10000000000) || 32;
   },
 
   /**
@@ -1398,15 +1449,15 @@ sjcl.bitArray = {
    * @return {boolean} true if a == b; false otherwise.
    */
   equal: function(a, b) {
-    if (sjcl.bitArray.bitLength(a) !== sjcl.bitArray.bitLength(b)) {
-      return false;
-    }
-    var x = 0,
-      i;
-    for (i = 0; i < a.length; i++) {
-      x |= a[i] ^ b[i];
-    }
-    return(x === 0);
+	if (sjcl.bitArray.bitLength(a) !== sjcl.bitArray.bitLength(b)) {
+	  return false;
+	}
+	var x = 0,
+	  i;
+	for (i = 0; i < a.length; i++) {
+	  x |= a[i] ^ b[i];
+	}
+	return(x === 0);
   },
 
   /** Shift an array right.
@@ -1417,35 +1468,35 @@ sjcl.bitArray = {
    * @private
    */
   _shiftRight: function(a, shift, carry, out) {
-    var i, last2 = 0,
-      shift2;
-    if (out === undefined) {
-      out = [];
-    }
+	var i, last2 = 0,
+	  shift2;
+	if (out === undefined) {
+	  out = [];
+	}
 
-    for (; shift >= 32; shift -= 32) {
-      out.push(carry);
-      carry = 0;
-    }
-    if (shift === 0) {
-      return out.concat(a);
-    }
+	for (; shift >= 32; shift -= 32) {
+	  out.push(carry);
+	  carry = 0;
+	}
+	if (shift === 0) {
+	  return out.concat(a);
+	}
 
-    for (i = 0; i < a.length; i++) {
-      out.push(carry | a[i] >>> shift);
-      carry = a[i] << (32 - shift);
-    }
-    last2 = a.length ? a[a.length - 1] : 0;
-    shift2 = sjcl.bitArray.getPartial(last2);
-    out.push(sjcl.bitArray.partial(shift + shift2 & 31, (shift + shift2 > 32) ? carry : out.pop(), 1));
-    return out;
+	for (i = 0; i < a.length; i++) {
+	  out.push(carry | a[i] >>> shift);
+	  carry = a[i] << (32 - shift);
+	}
+	last2 = a.length ? a[a.length - 1] : 0;
+	shift2 = sjcl.bitArray.getPartial(last2);
+	out.push(sjcl.bitArray.partial(shift + shift2 & 31, (shift + shift2 > 32) ? carry : out.pop(), 1));
+	return out;
   },
 
   /** xor a block of 4 words together.
    * @private
    */
   _xor4: function(x, y) {
-    return [x[0] ^ y[0], x[1] ^ y[1], x[2] ^ y[2], x[3] ^ y[3]];
+	return [x[0] ^ y[0], x[1] ^ y[1], x[2] ^ y[2], x[3] ^ y[3]];
   }
 };
 
@@ -1465,46 +1516,46 @@ sjcl.codec.base64 = {
   
   /** Convert from a bitArray to a base64 string. */
   fromBits: function (arr, _noEquals, _url) {
-    var out = "", i, bits=0, c = sjcl.codec.base64._chars, ta=0, bl = sjcl.bitArray.bitLength(arr);
-    if (_url) c = c.substr(0,62) + '-_';
-    for (i=0; out.length * 6 < bl; ) {
-      out += c.charAt((ta ^ arr[i]>>>bits) >>> 26);
-      if (bits < 6) {
-        ta = arr[i] << (6-bits);
-        bits += 26;
-        i++;
-      } else {
-        ta <<= 6;
-        bits -= 6;
-      }
-    }
-    while ((out.length & 3) && !_noEquals) { out += "="; }
-    return out;
+	var out = "", i, bits=0, c = sjcl.codec.base64._chars, ta=0, bl = sjcl.bitArray.bitLength(arr);
+	if (_url) c = c.substr(0,62) + '-_';
+	for (i=0; out.length * 6 < bl; ) {
+	  out += c.charAt((ta ^ arr[i]>>>bits) >>> 26);
+	  if (bits < 6) {
+		ta = arr[i] << (6-bits);
+		bits += 26;
+		i++;
+	  } else {
+		ta <<= 6;
+		bits -= 6;
+	  }
+	}
+	while ((out.length & 3) && !_noEquals) { out += "="; }
+	return out;
   },
   
   /** Convert from a base64 string to a bitArray */
   toBits: function(str, _url) {
-    str = str.replace(/\s|=/g,'');
-    var out = [], i, bits=0, c = sjcl.codec.base64._chars, ta=0, x;
-    if (_url) c = c.substr(0,62) + '-_';
-    for (i=0; i<str.length; i++) {
-      x = c.indexOf(str.charAt(i));
-      if (x < 0) {
-        throw new sjcl.exception.invalid("this isn't base64!");
-      }
-      if (bits > 26) {
-        bits -= 26;
-        out.push(ta ^ x>>>bits);
-        ta  = x << (32-bits);
-      } else {
-        bits += 6;
-        ta ^= x << (32-bits);
-      }
-    }
-    if (bits&56) {
-      out.push(sjcl.bitArray.partial(bits&56, ta, 1));
-    }
-    return out;
+	str = str.replace(/\s|=/g,'');
+	var out = [], i, bits=0, c = sjcl.codec.base64._chars, ta=0, x;
+	if (_url) c = c.substr(0,62) + '-_';
+	for (i=0; i<str.length; i++) {
+	  x = c.indexOf(str.charAt(i));
+	  if (x < 0) {
+		throw new sjcl.exception.invalid("this isn't base64!");
+	  }
+	  if (bits > 26) {
+		bits -= 26;
+		out.push(ta ^ x>>>bits);
+		ta  = x << (32-bits);
+	  } else {
+		bits += 6;
+		ta ^= x << (32-bits);
+	  }
+	}
+	if (bits&56) {
+	  out.push(sjcl.bitArray.partial(bits&56, ta, 1));
+	}
+	return out;
   }
 };
 
@@ -1524,35 +1575,35 @@ sjcl.codec.base64url = {
 /** @namespace UTF-8 strings */
 sjcl.codec.utf8String = { /** Convert from a bitArray to a UTF-8 string. */
   fromBits: function(arr) {
-    var out = "",
-      bl = sjcl.bitArray.bitLength(arr),
-      i, tmp;
-    for (i = 0; i < bl / 8; i++) {
-      if ((i & 3) === 0) {
-        tmp = arr[i / 4];
-      }
-      out += String.fromCharCode(tmp >>> 24);
-      tmp <<= 8;
-    }
-    return decodeURIComponent(escape(out));
+	var out = "",
+	  bl = sjcl.bitArray.bitLength(arr),
+	  i, tmp;
+	for (i = 0; i < bl / 8; i++) {
+	  if ((i & 3) === 0) {
+		tmp = arr[i / 4];
+	  }
+	  out += String.fromCharCode(tmp >>> 24);
+	  tmp <<= 8;
+	}
+	return decodeURIComponent(escape(out));
   },
 
   /** Convert from a UTF-8 string to a bitArray. */
   toBits: function(str) {
-    str = unescape(encodeURIComponent(str));
-    var out = [],
-      i, tmp = 0;
-    for (i = 0; i < str.length; i++) {
-      tmp = tmp << 8 | str.charCodeAt(i);
-      if ((i & 3) === 3) {
-        out.push(tmp);
-        tmp = 0;
-      }
-    }
-    if (i & 3) {
-      out.push(sjcl.bitArray.partial(8 * (i & 3), tmp));
-    }
-    return out;
+	str = unescape(encodeURIComponent(str));
+	var out = [],
+	  i, tmp = 0;
+	for (i = 0; i < str.length; i++) {
+	  tmp = tmp << 8 | str.charCodeAt(i);
+	  if ((i & 3) === 3) {
+		out.push(tmp);
+		tmp = 0;
+	  }
+	}
+	if (i & 3) {
+	  out.push(sjcl.bitArray.partial(8 * (i & 3), tmp));
+	}
+	return out;
   }
 };
 
@@ -1573,7 +1624,7 @@ sjcl.codec.utf8String = { /** Convert from a bitArray to a UTF-8 string. */
  * @param {bitArray} salt The salt.  Should have lots of entropy.
  * @param {Number} [count=1000] The number of iterations.  Higher numbers make the function slower but more secure.
  * @param {Number} [length] The length of the derived key.  Defaults to the
-                            output size of the hash function.
+							output size of the hash function.
  * @param {Object} [Prff=sjcl.misc.hmac] The pseudorandom function family.
  * @return {bitArray} the derived key.
  */
@@ -1581,29 +1632,29 @@ sjcl.misc.pbkdf2 = function (password, salt, count, length, Prff) {
   count = count || 1000;
   
   if (length < 0 || count < 0) {
-    throw sjcl.exception.invalid("invalid params to pbkdf2");
+	throw sjcl.exception.invalid("invalid params to pbkdf2");
   }
   
   if (typeof password === "string") {
-    password = sjcl.codec.utf8String.toBits(password);
+	password = sjcl.codec.utf8String.toBits(password);
   }
   
   Prff = Prff || sjcl.misc.hmac;
   
   var prf = new Prff(password),
-      u, ui, i, j, k, out = [], b = sjcl.bitArray;
+	  u, ui, i, j, k, out = [], b = sjcl.bitArray;
 
   for (k = 1; 32 * out.length < (length || 1); k++) {
-    u = ui = prf.encrypt(b.concat(salt,[k]));
-    
-    for (i=1; i<count; i++) {
-      ui = prf.encrypt(ui);
-      for (j=0; j<ui.length; j++) {
-        u[j] ^= ui[j];
-      }
-    }
-    
-    out = out.concat(u);
+	u = ui = prf.encrypt(b.concat(salt,[k]));
+	
+	for (i=1; i<count; i++) {
+	  ui = prf.encrypt(ui);
+	  for (j=0; j<ui.length; j++) {
+		u[j] ^= ui[j];
+	  }
+	}
+	
+	out = out.concat(u);
   }
 
   if (length) { out = b.clamp(out, length); }
@@ -1659,11 +1710,11 @@ sjcl.misc.hmac.prototype.encrypt=sjcl.misc.hmac.prototype.mac=function(a,b){
 sjcl.hash.sha256 = function (hash) {
   if (!this._key[0]) { this._precompute(); }
   if (hash) {
-    this._h = hash._h.slice(0);
-    this._buffer = hash._buffer.slice(0);
-    this._length = hash._length;
+	this._h = hash._h.slice(0);
+	this._buffer = hash._buffer.slice(0);
+	this._length = hash._length;
   } else {
-    this.reset();
+	this.reset();
   }
 };
 
@@ -1689,10 +1740,10 @@ sjcl.hash.sha256.prototype = {
    * @return this
    */
   reset:function () {
-    this._h = this._init.slice(0);
-    this._buffer = [];
-    this._length = 0;
-    return this;
+	this._h = this._init.slice(0);
+	this._buffer = [];
+	this._length = 0;
+	return this;
   },
   
   /**
@@ -1701,16 +1752,16 @@ sjcl.hash.sha256.prototype = {
    * @return this
    */
   update: function (data) {
-    if (typeof data === "string") {
-      data = sjcl.codec.utf8String.toBits(data);
-    }
-    var i, b = this._buffer = sjcl.bitArray.concat(this._buffer, data),
-        ol = this._length,
-        nl = this._length = ol + sjcl.bitArray.bitLength(data);
-    for (i = 512+ol & -512; i <= nl; i+= 512) {
-      this._block(b.splice(0,16));
-    }
-    return this;
+	if (typeof data === "string") {
+	  data = sjcl.codec.utf8String.toBits(data);
+	}
+	var i, b = this._buffer = sjcl.bitArray.concat(this._buffer, data),
+		ol = this._length,
+		nl = this._length = ol + sjcl.bitArray.bitLength(data);
+	for (i = 512+ol & -512; i <= nl; i+= 512) {
+	  this._block(b.splice(0,16));
+	}
+	return this;
   },
   
   /**
@@ -1718,26 +1769,26 @@ sjcl.hash.sha256.prototype = {
    * @return {bitArray} The hash value, an array of 8 big-endian words.
    */
   finalize:function () {
-    var i, b = this._buffer, h = this._h;
+	var i, b = this._buffer, h = this._h;
 
-    // Round out and push the buffer
-    b = sjcl.bitArray.concat(b, [sjcl.bitArray.partial(1,1)]);
-    
-    // Round out the buffer to a multiple of 16 words, less the 2 length words.
-    for (i = b.length + 2; i & 15; i++) {
-      b.push(0);
-    }
-    
-    // append the length
-    b.push(Math.floor(this._length / 0x100000000));
-    b.push(this._length | 0);
+	// Round out and push the buffer
+	b = sjcl.bitArray.concat(b, [sjcl.bitArray.partial(1,1)]);
+	
+	// Round out the buffer to a multiple of 16 words, less the 2 length words.
+	for (i = b.length + 2; i & 15; i++) {
+	  b.push(0);
+	}
+	
+	// append the length
+	b.push(Math.floor(this._length / 0x100000000));
+	b.push(this._length | 0);
 
-    while (b.length) {
-      this._block(b.splice(0,16));
-    }
+	while (b.length) {
+	  this._block(b.splice(0,16));
+	}
 
-    this.reset();
-    return h;
+	this.reset();
+	return h;
   },
 
   /**
@@ -1756,14 +1807,14 @@ sjcl.hash.sha256.prototype = {
   _key:[],
   /*
   _key:
-    [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-     0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-     0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-     0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-     0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-     0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-     0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2],
+	[0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+	 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+	 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+	 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+	 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+	 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+	 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+	 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2],
   */
 
 
@@ -1772,24 +1823,24 @@ sjcl.hash.sha256.prototype = {
    * @private
    */
   _precompute: function () {
-    var i = 0, prime = 2, factor;
+	var i = 0, prime = 2, factor;
 
-    function frac(x) { return (x-Math.floor(x)) * 0x100000000 | 0; }
+	function frac(x) { return (x-Math.floor(x)) * 0x100000000 | 0; }
 
-    outer: for (; i<64; prime++) {
-      for (factor=2; factor*factor <= prime; factor++) {
-        if (prime % factor === 0) {
-          // not a prime
-          continue outer;
-        }
-      }
-      
-      if (i<8) {
-        this._init[i] = frac(Math.pow(prime, 1/2));
-      }
-      this._key[i] = frac(Math.pow(prime, 1/3));
-      i++;
-    }
+	outer: for (; i<64; prime++) {
+	  for (factor=2; factor*factor <= prime; factor++) {
+		if (prime % factor === 0) {
+		  // not a prime
+		  continue outer;
+		}
+	  }
+	  
+	  if (i<8) {
+		this._init[i] = frac(Math.pow(prime, 1/2));
+	  }
+	  this._key[i] = frac(Math.pow(prime, 1/3));
+	  i++;
+	}
   },
   
   /**
@@ -1798,56 +1849,56 @@ sjcl.hash.sha256.prototype = {
    * @private
    */
   _block:function (words) {  
-    var i, tmp, a, b,
-      w = words.slice(0),
-      h = this._h,
-      k = this._key,
-      h0 = h[0], h1 = h[1], h2 = h[2], h3 = h[3],
-      h4 = h[4], h5 = h[5], h6 = h[6], h7 = h[7];
+	var i, tmp, a, b,
+	  w = words.slice(0),
+	  h = this._h,
+	  k = this._key,
+	  h0 = h[0], h1 = h[1], h2 = h[2], h3 = h[3],
+	  h4 = h[4], h5 = h[5], h6 = h[6], h7 = h[7];
 
-    /* Rationale for placement of |0 :
-     * If a value can overflow is original 32 bits by a factor of more than a few
-     * million (2^23 ish), there is a possibility that it might overflow the
-     * 53-bit mantissa and lose precision.
-     *
-     * To avoid this, we clamp back to 32 bits by |'ing with 0 on any value that
-     * propagates around the loop, and on the hash state h[].  I don't believe
-     * that the clamps on h4 and on h0 are strictly necessary, but it's close
-     * (for h4 anyway), and better safe than sorry.
-     *
-     * The clamps on h[] are necessary for the output to be correct even in the
-     * common case and for short inputs.
-     */
-    for (i=0; i<64; i++) {
-      // load up the input word for this round
-      if (i<16) {
-        tmp = w[i];
-      } else {
-        a   = w[(i+1 ) & 15];
-        b   = w[(i+14) & 15];
-        tmp = w[i&15] = ((a>>>7  ^ a>>>18 ^ a>>>3  ^ a<<25 ^ a<<14) + 
-                         (b>>>17 ^ b>>>19 ^ b>>>10 ^ b<<15 ^ b<<13) +
-                         w[i&15] + w[(i+9) & 15]) | 0;
-      }
-      
-      tmp = (tmp + h7 + (h4>>>6 ^ h4>>>11 ^ h4>>>25 ^ h4<<26 ^ h4<<21 ^ h4<<7) +  (h6 ^ h4&(h5^h6)) + k[i]); // | 0;
-      
-      // shift register
-      h7 = h6; h6 = h5; h5 = h4;
-      h4 = h3 + tmp | 0;
-      h3 = h2; h2 = h1; h1 = h0;
+	/* Rationale for placement of |0 :
+	 * If a value can overflow is original 32 bits by a factor of more than a few
+	 * million (2^23 ish), there is a possibility that it might overflow the
+	 * 53-bit mantissa and lose precision.
+	 *
+	 * To avoid this, we clamp back to 32 bits by |'ing with 0 on any value that
+	 * propagates around the loop, and on the hash state h[].  I don't believe
+	 * that the clamps on h4 and on h0 are strictly necessary, but it's close
+	 * (for h4 anyway), and better safe than sorry.
+	 *
+	 * The clamps on h[] are necessary for the output to be correct even in the
+	 * common case and for short inputs.
+	 */
+	for (i=0; i<64; i++) {
+	  // load up the input word for this round
+	  if (i<16) {
+		tmp = w[i];
+	  } else {
+		a   = w[(i+1 ) & 15];
+		b   = w[(i+14) & 15];
+		tmp = w[i&15] = ((a>>>7  ^ a>>>18 ^ a>>>3  ^ a<<25 ^ a<<14) + 
+						 (b>>>17 ^ b>>>19 ^ b>>>10 ^ b<<15 ^ b<<13) +
+						 w[i&15] + w[(i+9) & 15]) | 0;
+	  }
+	  
+	  tmp = (tmp + h7 + (h4>>>6 ^ h4>>>11 ^ h4>>>25 ^ h4<<26 ^ h4<<21 ^ h4<<7) +  (h6 ^ h4&(h5^h6)) + k[i]); // | 0;
+	  
+	  // shift register
+	  h7 = h6; h6 = h5; h5 = h4;
+	  h4 = h3 + tmp | 0;
+	  h3 = h2; h2 = h1; h1 = h0;
 
-      h0 = (tmp +  ((h1&h2) ^ (h3&(h1^h2))) + (h1>>>2 ^ h1>>>13 ^ h1>>>22 ^ h1<<30 ^ h1<<19 ^ h1<<10)) | 0;
-    }
+	  h0 = (tmp +  ((h1&h2) ^ (h3&(h1^h2))) + (h1>>>2 ^ h1>>>13 ^ h1>>>22 ^ h1<<30 ^ h1<<19 ^ h1<<10)) | 0;
+	}
 
-    h[0] = h[0]+h0 | 0;
-    h[1] = h[1]+h1 | 0;
-    h[2] = h[2]+h2 | 0;
-    h[3] = h[3]+h3 | 0;
-    h[4] = h[4]+h4 | 0;
-    h[5] = h[5]+h5 | 0;
-    h[6] = h[6]+h6 | 0;
-    h[7] = h[7]+h7 | 0;
+	h[0] = h[0]+h0 | 0;
+	h[1] = h[1]+h1 | 0;
+	h[2] = h[2]+h2 | 0;
+	h[3] = h[3]+h3 | 0;
+	h[4] = h[4]+h4 | 0;
+	h[5] = h[5]+h5 | 0;
+	h[6] = h[6]+h6 | 0;
+	h[7] = h[7]+h7 | 0;
   }
 };
 

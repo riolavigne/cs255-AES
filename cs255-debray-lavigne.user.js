@@ -57,7 +57,7 @@ function Encrypt(plainText, group) {
 // @return {String} Decryption of the ciphertext.
 function Decrypt(cipherText, group) {
 	if (cipherText.indexOf('AES:') == 0) {
-		// decrypt, ignore the 'AES'
+		// decrypt, ignore the 'AES:'
 		var ct = cipherText.slice(4);
 		var key = sjcl.codec.base64.toBits(keys[group]);
 		return decryptString(key, ct);
@@ -196,7 +196,6 @@ function mac(bits, key1, key2) {
  */
 function LoginUser() {
 	// used to verify if user has entered the correct password
-	// TODO: make encrypt, not RAW
 	var verified = "password verified";
 
 	if (sessionStorage.getItem("facebook-user-" + my_username)) {
@@ -431,17 +430,6 @@ function padBits(bits) {
 	var padded = bits.concat(pad);
 	padded = sjcl.bitArray.clamp(padded, 128);
 	return bits.concat(pad);
-}
-
-// Removes the padding on a message for decrpytion.
-function removePad(bits) {
-	var l = bits.length;
-	var bl;
-	for (var i = l - 1; i >= 0; i--) { // go from back to front
-		bl = bits[i];
-		if (bl > 0) break;
-	}
-	return sjcl.bitArray.clamp(bits, bl);
 }
 
 /////////////////////////////////////////////////////////

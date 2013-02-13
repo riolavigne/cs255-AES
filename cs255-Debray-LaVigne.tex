@@ -4,7 +4,7 @@
 \DeclareMathOperator{\AES}{AES}
 \begin{document}
 \title{Milestone 2 Writeup}
-\author{Arun Debray and Rio LaVigne\\\today}
+\author{Rio LaVigne and Arun Debray\\\today}
 \maketitle
 In this writeup, we will illustrate that each of the functions that we implemented is secure.
 % Secure Login
@@ -22,36 +22,52 @@ To show that logging in is secure, it will be necessary to demonstrate that the 
 %This method calls \verb+sjcl.misc.pbkdf2()+ as a PRF, accepting a 128-bit random salt and the group name as arguments. The salt is generated with the provided function \verb+GetRandomValues()+, and is therefore truly random, and \verb+sjcl.misc.pbkdf2()+ is a secure PRF under the assumption that the salt is random, so this function is secure.
 This method uses \verb+GetRandomValues()+ to generate 128-bit pseudorandom keys. Assuming \verb+GetRandomValues()+ is a secure PRG, we have that \texttt{GenerateKeys()} generates secure pseudorandom keys.
 
-% encryption and decryption
-\section{The \texttt{Encrypt()} and \texttt{Decrypt()} methods}%todo
-These methods implement an AES-128 block cipher operating in random counter mode. Specifically, if $K$ is the key for a given group, then $E(K,m)$ is given as follows:
-\begin{enumerate}
-\item First, the message is padded so that its length is a multiple of $128$; then, it is chopped into $128$-bit slices: $m = m[0]\conc m[1]\conc\dots\conc m[k]$ for some $k$.
-\item Then, each block is run through AES-128: $c[i] = \operatorname{AES-128}(\mathrm{IV} + i\conc K,m[i])$. The $\mathrm{IV}$ is a randomly generated nonce that is incremented with every use of the group key in a given session.
-\item Then, the ciphertext is assembled from the blocks: $c = (\mathrm{IV} + i) \conc c[1] \conc c[2] \conc\dots\conc c[k]$.
-\end{enumerate}
-In this system, the key $K$ is used many times in a given group, but each key-nonce pair is used exactly once. Thus, this system is not vulnerable to many-time pad attacks; since the nonces are 32-bit integers, then the probability of a random collision is negligible. Thus, a successful attack on this system is equivalent to a successful attack on AES; as discussed in class, randomized counter mode is as secure as the PRP it is based upon. And since AES is believed to be secure, this system is secure.
-
-Additionally, message integrity is ensured by a MAC appended to the message; see Section~\ref{mac} for the full description. Thus, an adversary cannot change messages in the group without being noticed.
 % secure database for the keys
 % Securely storing
 % Securely loading
 \section{The \texttt{SaveKeys()} and \texttt{LoadKeys()} methods}%todo
-These methods rely on the same helper functions that \verb+Encrypt()+ and \verb+Decrypt()+ do; they implement the same AES-128 cipher in randomized counter mode. As discussed above, this is as secure as AES is. However, the differences are meaningful: in this case, the key is a master key generated from the password, rather than the shared group key.
+These methods rely on the same helper functions that \verb+Encrypt()+ and \verb+Decrypt()+ do; they implement the same AES-128 cipher in randomized counter mode. As discussed above, this is as secure as AES is. However, the differences are meaningful: in this case, the key is generated from the master key, created at login, rather than a shared group key.
 
-Thus, if Eve knows the group key for Bob's group $G$, she cannot gain any meaningful information about the rest of Bob's encrypted groups, since they have been encrypted in randomized counter mode; the additional obstacle of the nonce prevents Eve from gaining information about the master key.
+So, the keys are stored in a global Javascript object while a session is active, then stringified and encrypted using the helper function \verb+encryptString+, under the key generated from again using AES-128 as a PRG with $\AES(mk, 1)$; which is a different key from the verifier. If AES is a secure PRG, then, assuming our implementation of Randomized Counter Mode is secure, the keys are stored securely with a MAC.
 
-This also relies on the assumption that the master key is securely generated, which was shown in Section~\ref{securelogin}: the master key is generated from a random salt and a function assumed to be cryptographically secure. Thus, assuming that the master key is securely generated is reasonable.
+So, even if Eve knows the group key for one of Bob's group $G$, she cannot gain any meaningful information about the rest of Bob's encrypted groups, since they have been encrypted in randomized counter mode; the additional obstacle of the nonce prevents Eve from gaining information about the master key.
 
 Message integrity is ensured by a MAC appended to the message; see Section~\ref{mac} for the details. This implies that an adversary cannot change the keys in a way that goes undetected.
-% MAC
+% encryption and decryption
+\section{The \texttt{Encrypt()} and \texttt{Decrypt()} methods}%todo
+These methods implement an AES-128 block cipher operating in random counter mode. Specifically, if $K$ is the key for a given group, then $E(K,mString)$ is given as follows:
+\begin{enumerate}
+\item First, we generate 3 different keys from the group key $K$, $k0$, $k1$, and $k2$, using AES-128 as a PRG. $k0$ is used to encrypt messages directly while the other two are used to MAC. Then, we randomly generate a 96-bit IV using \verb+GetRandomValues+, and create a counter at 0.
+\item The message, $mString$, is converted from UTF-8 into bits, $m$, and then fed into a loop, 128-bits at a time. It does not matter if the message is 128-bits or not, since Randomized Counter Mode works by XOR'ing the message with a nonce. The loop is as follows:
+  \begin{enumerate}
+    \item Take the next 128-bits of $m$ (or however many are left). Call this $m[i]$. Terminate if there are no more bits in $m$.
+    \item Generate a nonce by appending the 32-bit counter with the IV, making $\mathrm{IV}\conc\operatorname{ctr}$ 128 bits. Encrypt $\mathrm{IV}\conc \mathrm{ctr}$ using $\AES$ with $k0$.
+    \item XOR the encrypted nonce with $m[i]$ to get $c[i]$.
+    \item Increment the counter.
+  \end{enumerate}
+\item After the loop, we should have a ciphertext $c = c[0] \conc \dots \conc c[n]$. We prepend the IV, $\mathrm{IV} \conc c$.
+\item Then, we MAC the IV and ciphertext together to generate a tag; this ensures that we can detect if either the IV or the ciphertext has been altered. Encrypting and then generating the MAC is proven to be A.E. secure, assuming our MAC is working correctly. We prepend the tag, $t$, to get $t \conc \mathrm{IV} \conc c$ as the final ciphertext in bits.
+\item The bits in $c$ are converted into base-64 characters, $cString$, and returned.
+\end{enumerate}
+
+% Do we need mroe details? Or is this too many?
+Decryption works simply by reversing the process. We take the base-64 string and convert it back into bits. Then, we remove the tag and verify the MAC, then remove the IV and decrypt. If the MAC fails, we do not decrypt, but throw an error.
+
+Additionally, message integrity is ensured by a MAC appended to the message; see Section~\ref{mac} for the full description. Thus, an adversary cannot change messages in the group without being noticed.
 % authenticate group messages
 % keys in the key store haven’t been changed
 \section{The MAC and message authentication}
 \label{mac}
-Every message encrypted by this system is passed through a method that appends a MAC based on the ciphertext, in an encrypt-then-MAC protocol. The MAC used is called NMAC, which calculates the tag as follows:
-\[\operatorname{NMAC}(c) = E(K_2,E(c[n],E(c[n-1],E(\dots(c[1],E(c[0],K_1))\dots)))),\]
-where $E$ is the PRF used to implement AES as before and $K_1,K_2\in\cK$ are two keys generated from the secret key $K$ for the message by using AES as a PRF: $K_1 = E(K,0\conc 0\conc 0\conc 0)$ and $K_2 = E(K,1\conc 1\conc 1\conc 1)$. The ciphertext $c$ has already been padded so as to be a multiple of the block size, first by appending the size of the message, then adding zeros as necessary. Then, the sent ciphertext is $c^* = c\conc t$, the original ciphertext with the MAC attached.
+Every message encrypted by this system is passed through a method that appends a MAC based on the ciphertext, in an encrypt-then-MAC protocol. The MAC used is NMAC, which calculates the tag, $t$, using two keys, $k_1$ and $k_2$, and a ciphertext in bits, $c$, as follows:
+\begin{enumerate}
+  \item First, initialize an $\mathrm{IV}_0 = k_1$, and pad $c$ until it is a multiple of 128 bits, so that the pad-to-message length is one-to-one. This way, we can break $c$ into 128-bit chunks, $c = c[0]\conc c[1]\conc \dots \conc c[n]$.
+  \item Iterate throw each chunk, $c[i]$, with the following algorithm: set a new $\mathrm{IV}_{i+1} = \mathrm{IV}_i \oplus \AES(c[i],\mathrm{IV}_i)$.
+  \item Finally, encrypt $\mathrm{IV}_{n+1}$, the last IV generated from the loop, using AES with $k_2$. So, $t = \AES(k_2, \mathrm{IV}_i)$.
+\end{enumerate}
+
+% THIS IS WRONG!
+%\[\operatorname{NMAC}(c) = E(K_2,E(c[n],E(c[n-1],E(\dots(c[1],E(c[0],K_1))\dots)))),\]
+%where $E$ is the PRF used to implement AES as before and $K_1,K_2\in\cK$ are two keys generated from the secret key $K$ for the message by using AES as a PRF: $K_1 = E(K,0\conc 0\conc 0\conc 0)$ and $K_2 = E(K,1\conc 1\conc 1\conc 1)$. The ciphertext $c$ has already been padded so as to be a multiple of the block size, first by appending the size of the message, then adding zeros as necessary. Then, the sent ciphertext is $c^* = c\conc t$, the original ciphertext with the MAC attached.
 
 When decrypting, the receiver can check the integrity of a ciphertext $c^* = c\conc t$ by removing the tag $t$ (since it is known to be of a given size) and computing $t' = \operatorname{NMAC}(c)$. If $t' = t$, then the message is validated; otherwise, an error is thrown. If the message is valid, then the padding is removed by removing all trailing zeros until the size of the message is found to yield the original ciphertext, which is then decrypted as above.
 
@@ -63,7 +79,6 @@ This MAC scheme is secure: that is, it provides authenticated encryption. This w
 \item Next, it will be shown that NMAC is secure. It was demonstrated in class that NMAC is secure as long as the function $E$ that it calls is a secure PRF and the two keys $K_1$ and $K_2$ are independent. The former point is met because AES is assumed to be a secure PRF, which has been demonstrated in class to be a reasonable assumption, and the latter point also holds because of point~\ref{independentkeys}: $K_1$ and $K_2$ have been demonstrated to be independent. Thus, this MAC function is secure, in that existential forgeries cannot be made.
 
 It is also necessary for the MAC function to defend against timing attacks. This is done because all comparisons are made with a comparison function that takes the same amount of time; thus, an almost completely incorrect message takes as much time to check as a nearly correct one. This prevents the adversary from using the timing of the response to learn more about the system.
-%  It is also necessary for the MAC function to defend against timing attacks. This is done because all comparisons are made with a comparison function that takes the same amount of time; thus, an almost completely incorrect message takes as much time to check as a nearly correct one. This prevents the adversary from using the timing of the response to learn more about the system.
 \item The final point to consider is that the MAC is calculated based on the ciphertext, and in particular is added after the encryption is done; thus, it implements the encrypt-then-MAC protocol. This is the most secure option, as demonstrated in class: if the MAC is calculated based on the plaintext and not encrypted, then it can leak information about the plaintext. If the MAC is computed based on the plaintext and then encrypted (i.e. MAC-then-encrypt mode), there are a number of subtle timing attacks that make security much harder to implement. However, this mode leaks no information about the plaintext and prevents an adversary from tampering with the ciphertext (as such an attack would be detected as a MAC error).
 \end{enumerate}
 Thus, this MACing method provides authenticated encryption.

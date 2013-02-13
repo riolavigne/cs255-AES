@@ -48,12 +48,20 @@ These methods implement an AES-128 block cipher operating in random counter mode
 \end{enumerate}
 
 % Do we need mroe details? Or is this too many?
+Decryption works simply by reversing the process. We take the base-64 string and convert it back into bits. Then, we remove the tag and verify the MAC, then remove the IV and decrypt. If the MAC fails, we do not decrypt, but throw an error.
 
 % MAC
 % authenticate group messages
 % keys in the key store haven’t been changed
 \section{The MAC and message authentication}
-Every message encrypted by this system is passed through a method that appends a MAC based on the ciphertext, in an encrypt-then-MAC protocol. The MAC used is called NMAC, which calculates the tag as follows:
+Every message encrypted by this system is passed through a method that appends a MAC based on the ciphertext, in an encrypt-then-MAC protocol. The MAC used is NMAC, which calculates the tag, $t$, using two keys, $k_1$ and $k_2$, and a ciphertext in bits, $c$, as follows:
+\begin{enumerate}
+  \item First, initialize an IV$_0 = k_1$, and pad $c$ until it is a multiple of 128 bits, so that the pad-to-message length is one-to-one. This way, we can break $c$ into 128-bit chuncks, $c = c[0]||c[1]|| \dots ||c[n]$.
+  \item Iterate throw each chunk, $c[i]$, with the following algorithm: set a new IV$_{i+1}$ = IV$_i \oplus AES(c[i], $ IV$_i$ $)$.
+  \item Finally, encrypt IV$_{n+1}$, the last IV generated from the loop, using AES with $k_2$. So, $t = AES(k_2,$ IV$_i$ $)$.
+\end{enumerate}
+
+% THIS IS WRONG!
 \[\operatorname{NMAC}(c) = E(K_2,E(c[n],E(c[n-1],E(\dots(c[1],E(c[0],K_1))\dots)))),\]
 where $E$ is the PRF used to implement AES as before and $K_1,K_2\in\cK$ are two keys generated from the secret key $K$ for the message by using AES as a PRF: $K_1 = E(K,0\conc 0\conc 0\conc 0)$ and $K_2 = E(K,1\conc 1\conc 1\conc 1)$. The ciphertext $c$ has already been padded so as to be a multiple of the block size, first by appending the size of the message, then adding zeros as necessary. Then, the sent ciphertext is $c^* = c\conc t$, the original ciphertext with the MAC attached.
 

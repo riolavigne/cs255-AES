@@ -30,6 +30,20 @@ var keys = {}; // association map of keys: group -> key
 var masterKey;
 var ivLen = 3; // number of 32-bit integers in an iv
 
+// encrypt/decrypt
+
+//E/D helpers
+
+// MAC
+
+// MAC Helpers
+
+// Login
+
+// Login Helpers
+
+// Other helpers
+
 function getMaster() {
     if (masterKey) return;
     masterKey = JSON.parse(sessionStorage.getItem("facebook-master-"+ my_username));
@@ -50,7 +64,6 @@ function Encrypt(plainText, group) {
 	return plainText;
     } else {
 	// encrypt, add tag.
-	var salt = [0,0,0,0];
 	var key = sjcl.codec.base64.toBits(keys[group]);
 	return 'AES:' + encryptString(key, plainText);
     }
@@ -71,68 +84,6 @@ function xorBits(a, b) {
 	x = sjcl.bitArray.concat(x, [a[i] ^ b[i]]);
     }
     return sjcl.bitArray.clamp(x, bl);
-}
-
-function padTest() {
-    var k = GetRandomValues(4);
-    var cipher = new sjcl.cipher.aes(k);
-    console.log("Simple padding test...");
-    // want to pad a partial bit array to 128
-    var a = [0];
-    a = sjcl.bitArray.concat(a, [sjcl.bitArray.partial(10, 1)]);
-    console.log("a", a, sjcl.bitArray.bitLength(a));
-    var b = padBits(a);
-    console.log("b", b, b.length, b.length * 32);
-    var c = cipher.encrypt(b);
-    console.log("c", c, c.length);
-    var d = cipher.decrypt(c);
-    console.log("d", d, d.length);
-    var e = removePad(d);
-    console.log("e", e, e.length);
-
-    console.log("Edge case padding test... multiple of 128");
-    // want to pad a bit array of len 128
-    a = [1, 2, 3, 4];
-    console.log("a", a, sjcl.bitArray.bitLength(a));
-    b = padBits(a);
-    console.log("b", b, sjcl.bitArray.bitLength(b));
-    //c = cipher.encrypt(b);
-    c = [];
-    for (var i = 0; i < b.length; i += 4) {
-	var x = cipher.encrypt(b.slice(i, i+4));
-	console.log("encrypting b...", x);
-	c = c.concat(x);
-    }
-    console.log("c", c, sjcl.bitArray.bitLength(c));
-    d = [];//cipher.decrypt(c);
-    for (var i = 0; i < c.length; i += 4) {
-	var x = cipher.decrypt(c.slice(i, i+4));
-	d = d.concat(x);
-    }
-    console.log("d", d, sjcl.bitArray.bitLength(d));
-    e = removePad(d);
-    console.log("e", e, sjcl.bitArray.bitLength(e));
-
-    console.log("Edge case padding test... []");
-    a = []
-    console.log("a", a, sjcl.bitArray.bitLength(a));
-    b = padBits(a);
-    console.log("b", b, sjcl.bitArray.bitLength(b));
-    c = [];
-    for (var i = 0; i < b.length; i += 4) {
-	var x = cipher.encrypt(b.slice(i, i+4));
-	console.log("encrypting b...", x);
-	c = c.concat(x);
-    }
-    console.log("c", c, sjcl.bitArray.bitLength(c));
-    d = [];
-    for (var i = 0; i < c.length; i += 4) {
-	var x = cipher.decrypt(c.slice(i, i+4));
-	d = d.concat(x);
-    }
-    console.log("d", d, sjcl.bitArray.bitLength(d));
-    e = removePad(d);
-    console.log("e", e, sjcl.bitArray.bitLength(e));
 }
 
 // Uses NMAC
@@ -165,20 +116,26 @@ function getTag(bits) {
 }
 
 function removeTag(bits) {
-    // return the bit array without the tag on the end
     return bits.slice(4);
 }
 
-//str is a ... string
-//but! key is a bit array
+function generateIV() {
+    return GetRandomValues(3);
+}
+
 function encryptString(key, str) {
+    var bits = sjcl.codec.utf8String.toBits(str);
+    bits = encryptBits(key, bits);
+    var cipherText = sjcl.codec.base64.fromBits(bits);
+    return cipherText;
+}
+
+function encryptBits(key, bits) {
     // generate 3 separate keys: 1 for encrypting and 2 for MAC'ing
     var key0 = generateNewKey(key, 0), key1 = generateNewKey(key, 1), 
     key2 = generateNewKey(key, 2);
-    // generate a randome iv and set up a counter...
-    var iv = GetRandomValues(3);
+    var iv = generateIV();
     var counter = 0;
-    var bits = sjcl.codec.utf8String.toBits(str);
     var encrypted = new Array;
     var cipher = new sjcl.cipher.aes(key0);
     for (var i = 0; i < bits.length; i+=4) {
@@ -190,45 +147,46 @@ function encryptString(key, str) {
     }
     // put the iv on first... MAC with the iv.
     encrypted = prependIV(encrypted, iv);
-    encrypted = mac(encrypted, key1, key2);
-    var cipherText = sjcl.codec.base64.fromBits(encrypted);
-    return cipherText;
+    return mac(encrypted, key1, key2);
 }
 
 function getIV(bits) {
-    var iv = sjcl.bitArray.bitSlice(bits, 0, ivLen * 32); //bits.slice(0, ivLen);
-    return iv;
+    var iv = sjcl.bitArray.bitSlice(bits, 0, ivLen * 32);
+    return iv.slice(0, ivLen);
 }
 
-// cphr and key are both bit arrays.
-function decryptString(key, cipherText) {
-    var key0 = generateNewKey(key, 0),
-    key1 = generateNewKey(key, 1), // key1 and key2 are the MAC keys
-    key2 = generateNewKey(key, 2);
+function removeIV(bits) {
+    return bits.slice(ivLen);
+}
 
+function decryptString(key, cipherText) {
     var bits = sjcl.codec.base64.toBits(cipherText);
-    // remove tag first, then IV
+    bits = decryptBits(key, bits);
+    var plainText = sjcl.codec.utf8String.fromBits(bits);
+    return plainText;
+}
+
+function decryptBits(key, bits) {
+    var key0 = generateNewKey(key, 0), key1 = generateNewKey(key, 1),
+    key2 = generateNewKey(key, 2);
     var tag = getTag(bits);
     bits = removeTag(bits);
     if (!verifyMac(bits, tag, key1, key2)) {
 	throw "MAC failed"
     }
-    // remove iv
     var iv = getIV(bits);
-    bits = bits.slice(ivLen);
-    var counter = new Array;
-    counter[0] = 0;
+    bits = removeIV(bits);
+    var counter = 0;
     var decrypted = new Array;
     var cipher = new sjcl.cipher.aes(key0);
     for (var i = 0; i < bits.length; i+=4) {
-	var nonce = sjcl.bitArray.concat(iv, counter);
+	var nonce = sjcl.bitArray.concat(iv, [counter]);
 	nonce = cipher.encrypt(nonce);
 	var curDec = xorBits(bits.slice(i, i + 4), nonce);
 	decrypted = sjcl.bitArray.concat(decrypted, curDec);
-	counter[0]++;
+	counter++;
     }
-    var plainText = sjcl.codec.utf8String.fromBits(decrypted);
-    return plainText;
+    return decrypted;
 }
 
 
@@ -848,7 +806,6 @@ function AddKey() {
     var isValid = validateKey(k);
     if (!isValid) return; // stop adding the key
   keys[g] = k;
-    console.log("key len", sjcl.bitArray.bitLength(k), k.length);
   SaveKeys();
   UpdateKeysTable();
 }
@@ -1885,29 +1842,13 @@ sjcl.hash.sha256.prototype = {
   }
 };
 
-function padOnceTest() {
-    console.log("Pad Once Test...");
-    var a = new Array;
-    a[0] = 1;
-    a = sjcl.bitArray.concat(a, [sjcl.bitArray.partial(10, 0)]);
-    console.log("a", a, sjcl.bitArray.bitLength(a));
-    var b = padOnce(a);
-    console.log("b", b, sjcl.bitArray.bitLength(b));
-    var c = removePad(b);
-    console.log("c", c, sjcl.bitArray.bitLength(c));
-}
-
-
 // This is the initialization
-//cs255.localStorage.clear();
 SetupUsernames();
 LoginUser();
 LoadKeys();
 AddElements();
 UpdateKeysTable();
 RegisterChangeEvents();
-//padOnceTest();
-//padTest();
 
 console.log("CS255 script finished loading.");
 

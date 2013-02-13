@@ -3,7 +3,7 @@
 \input{macros}
 \begin{document}
 \title{Milestone 2 Writeup}
-\author{Arun Debray and Rio LaVigne\\\today}
+\author{Rio LaVigne and Arun Debray\\\today}
 \maketitle
 In this writeup, we will illustrate that each of the functions that we implemented is secure.
 % Secure Login
@@ -24,21 +24,30 @@ This method uses \verb+GetRandomValues()+ to generate 128-bit pseudorandom keys.
 % Securely storing
 % Securely loading
 \section{The \texttt{SaveKeys()} and \texttt{LoadKeys()} methods}%todo
-These methods rely on the same helper functions that \verb+Encrypt()+ and \verb+Decrypt()+ do; they implement the same AES-128 cipher in randomized counter mode. As discussed above, this is as secure as AES is. However, the differences are meaningful: in this case, the key is a master key generated from the password, rather than the shared group key.
+These methods rely on the same helper functions that \verb+Encrypt()+ and \verb+Decrypt()+ do; they implement the same AES-128 cipher in randomized counter mode. As discussed above, this is as secure as AES is. However, the differences are meaningful: in this case, the key is generated from the master key, created at login, rather than a shared group key.
 
-Thus, if Eve knows the group key for Bob's group $G$, she cannot gain any meaningful information about the rest of Bob's encrypted groups, since they have been encrypted in randomized counter mode; the additional obstacle of the nonce prevents Eve from gaining information about the master key.
+So, the keys are stored in a global javascript object while a session is active, then stringified and encrypted using the helper function \verb+encryptString+, under the key generated from again using AES-128 as a PRG with $AES(mk, 1)$; which is a different key from the verifier. If AES is a secure PRG, then, assuming our implementation of Randomized Counter Mode is secure, the keys are stored securely with a MAC.
 
-This also relies on the assumption that the master key is securely generated, which was shown in the previous section.%now things are out of order.
+So, even if Eve knows the group key for one of Bob's group $G$, she cannot gain any meaningful information about the rest of Bob's encrypted groups, since they have been encrypted in randomized counter mode; the additional obstacle of the nonce prevents Eve from gaining information about the master key.
 
 % encryption and decryption
 \section{The \texttt{Encrypt()} and \texttt{Decrypt()} methods}%todo
-These methods implement an AES-128 block cipher operating in random counter mode. Specifically, if $K$ is the key for a given group, then $E(K,m)$ is given as follows:
+These methods implement an AES-128 block cipher operating in random counter mode. Specifically, if $K$ is the key for a given group, then $E(K,mString)$ is given as follows:
 \begin{enumerate}
-\item First, the message is padded so that its length is a multiple of $128$; then, it is chopped into $128$-bit slices: $m = m[0]\conc m[1]\conc\dots\conc m[k]$ for some $k$.
-\item Then, each block is run through AES-128: $c[i] = \operatorname{AES-128}(\mathrm{IV} + i\conc K,m[i])$. The $\mathrm{IV}$ is a randomly generated nonce that is incremented with every use of the group key in a given session.
-\item Then, the ciphertext is assembled from the blocks: $c = (\mathrm{IV} + i) \conc c[1] \conc c[2] \conc\dots\conc c[k]$.
+\item First, we generate 3 different keys from the group key $K$, $k0$, $k1$, and $k2$, using AES-128 as a PRG. $k0$ is used to encrypt messages directly while the other two are used to MAC. Then, we randomly generate a 96-bit IV using \verb+GetRandomValues+, and create a counter at 0.
+\item The message, $mString$, is converted from UTF-8 into bits, $m$, and then fed into a loop, 128-bits at a time. It does not matter if the message is 128-bits or not, since Randomized Counter Mode works by XOR'ing the message with a nonce. The loop is as follows:
+  \begin{enumerate}
+    \item Take the next 128-bits of $m$ (or however many are left). Call this $m[i]$. Terminate if there are no more bits in $m$.
+    \item Generate a nonce by appending the 32-bit counter with the IV, making IV||ctr 128 bits. Encrypt IV||ctr using $AES$ with $k0$.
+    \item XOR the encrypted nonce with $m[i]$ to get $c[i]$.
+    \item Increment the counter.
+  \end{enumerate}
+\item After the loop, we should have a ciphertext $c = c[0] || \dots || c[n]$. We prepend the IV, IV || $c$.
+\item Then, we MAC the IV and ciphertext together to generate a tag; this ensures that we can detect if either the IV or the ciphertext has been altered. Encrypting and then generating the MAC is proven to be A.E. secure, assuming our MAC is working correctly. We prepend the tag, $t$, to get $t$ || IV || $c$ as the final ciphertext in bits.
+\item The bits in $c$ are converted into base-64 characters, $cString$, and returned.
 \end{enumerate}
-In this system, the key $K$ is used many times in a given group, but each key-nonce pair is used exactly once. Thus, this system is not vulnerable to many-time pad attacks; since the nonces are 32-bit integers, then the probability of a random collision is negligible. Thus, a successful attack on this system is equivalent to a successful attack on AES; as discussed in class, randomized counter mode is as secure as the PRP it is based upon. And since AES is believed to be secure, this system is secure.
+
+% Do we need mroe details? Or is this too many?
 
 % MAC
 % authenticate group messages
